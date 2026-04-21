@@ -28,11 +28,14 @@ class CReadOnlyMpeg4File : public IReadOnlyFile
     static const uint16_t PCR_PID = 0x01FF;
     static const uint16_t DISPLACED_PID = 0x1E00;
     static const uint32_t PSI_MAX_STREAMS = 32;
+    static const size_t CHAPTER_LIST_MAX = 10000;
+    static const size_t CHAPTER_NAMES_LEN_MAX = 1024 * 1024;
 public:
     CReadOnlyMpeg4File() {}
     ~CReadOnlyMpeg4File() { Close(); }
     bool Open(LPCTSTR path, int flags, const char *&errorMessage);
     void Close();
+    const std::vector<std::pair<int, std::vector<WCHAR>>> *GetEmbeddedChapterList() const;
     int Read(BYTE *pBuf, int numToRead);
     __int64 SetPointer(__int64 distanceToMove, MOVE_METHOD moveMethod);
     __int64 GetSize() const;
@@ -116,6 +119,9 @@ private:
     int64_t m_pointer;
     CPsiArchiveReader m_psiDataReader;
     std::map<uint16_t, PSI_COUNTER_INFO> m_psiCounterInfoMap;
+    bool m_fLoadChapterTrack;
+    bool m_fHasChapter;
+    std::vector<std::pair<int, std::vector<WCHAR>>> m_chapterList;
 };
 
 #endif // INCLUDE_READ_ONLY_MPEG4_FILE_H

@@ -80,7 +80,7 @@ CChapterMap::~CChapterMap()
 
 // pathに対応する.chapterファイルを読み込む
 // .chapterファイルが存在すれば変更監視を開始する
-bool CChapterMap::Open(LPCTSTR path, LPCTSTR subDirName)
+bool CChapterMap::Open(LPCTSTR path, LPCTSTR subDirName, const std::function<bool(std::map<int, CHAPTER> &)> &insertChapters)
 {
     Close();
 
@@ -175,7 +175,8 @@ bool CChapterMap::Open(LPCTSTR path, LPCTSTR subDirName)
                 InsertOgmStyleCommand(cmd.data());
             }
         }
-        else {
+        else if (!insertChapters || !insertChapters(m_map)) {
+            m_map.clear();
             // もしあればファイル名からロード
             LPCTSTR pCmd = ::PathFindFileName(m_path);
             LPCTSTR pCmdLower = _tcsstr(pCmd, TEXT("c-"));

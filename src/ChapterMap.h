@@ -1,6 +1,8 @@
 ﻿#ifndef INCLUDE_CHAPTER_MAP_H
 #define INCLUDE_CHAPTER_MAP_H
 
+#include <functional>
+
 class CChapterMap
 {
     static const int RETRY_LIMIT = 3;
@@ -19,7 +21,7 @@ public:
     };
     CChapterMap();
     ~CChapterMap();
-    bool Open(LPCTSTR path, LPCTSTR subDirName);
+    bool Open(LPCTSTR path, LPCTSTR subDirName, const std::function<bool(std::map<int, CHAPTER> &)> &insertChapters);
     void Close();
     bool Sync();
     bool Insert(const std::pair<int, CHAPTER> &ch, int pos = -1);

@@ -351,6 +351,13 @@ ERROR_EXIT:
 }
 
 
+const std::vector<std::pair<int, std::vector<WCHAR>>> *CTsSender::GetEmbeddedChapterList() const
+{
+    CReadOnlyMpeg4File *mpeg4File = dynamic_cast<CReadOnlyMpeg4File*>(m_file.get());
+    return mpeg4File ? mpeg4File->GetEmbeddedChapterList() : nullptr;
+}
+
+
 // Tickカウント補正の初期設定をする
 void CTsSender::SetupQpc()
 {

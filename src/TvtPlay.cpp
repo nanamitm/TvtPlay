@@ -1598,7 +1598,16 @@ bool CTvtPlay::Open(LPCTSTR fileName, int offset, int stretchID)
     }
 
     // チャプターを読み込む
-    m_chapter.Open(fileName, m_szChaptersDirName);
+    m_chapter.Open(fileName, m_szChaptersDirName, [this](std::map<int, CChapterMap::CHAPTER> &chapterMap) -> bool {
+        const std::vector<std::pair<int, std::vector<WCHAR>>> *list = m_tsSender.GetEmbeddedChapterList();
+        if (list) {
+            for (size_t i = 0; i < list->size(); ++i) {
+                chapterMap.insert(std::pair<int, CChapterMap::CHAPTER>(min((*list)[i].first, CChapterMap::CHAPTER_POS_MAX), (*list)[i].second.data()));
+            }
+            return true;
+        }
+        return false;
+    });
     if (!fSeeked && m_fSkipXChapter) {
         // 先頭から1秒未満のスキップ開始チャプターを解釈
         std::map<int, CChapterMap::CHAPTER>::const_iterator it = m_chapter.Get().begin();
