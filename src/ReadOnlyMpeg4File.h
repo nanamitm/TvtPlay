@@ -65,6 +65,7 @@ private:
     }
     bool LoadSettings();
     void InitializeMetaInfo(LPCTSTR path);
+    bool InitializeMetaInfoUsingProgramText(LPCTSTR path);
     void LoadCaption(LPCTSTR path);
     void OpenPsiData(LPCTSTR path);
     bool InitializeTable(const char *&errorMessage);
@@ -102,6 +103,7 @@ private:
     TCHAR m_metaName[MAX_PATH];
     TCHAR m_vttExtension[16];
     TCHAR m_psiDataExtension[16];
+    TCHAR m_programTextExtension[16];
     bool m_fCheckFileAttributes;
     TCHAR m_iniBroadcastID[15];
     TCHAR m_iniTime[20];

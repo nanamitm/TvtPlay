@@ -160,6 +160,7 @@ bool CReadOnlyMpeg4File::LoadSettings()
     GetBufferedProfileString(buf.data(), TEXT("Meta"), TEXT("metadata.ini"), m_metaName, _countof(m_metaName));
     GetBufferedProfileString(buf.data(), TEXT("VttExtension"), TEXT(".vtt"), m_vttExtension, _countof(m_vttExtension));
     GetBufferedProfileString(buf.data(), TEXT("PsiDataExtension"), TEXT(".psc"), m_psiDataExtension, _countof(m_psiDataExtension));
+    GetBufferedProfileString(buf.data(), TEXT("ProgramTextExtension"), TEXT(".program.txt"), m_programTextExtension, _countof(m_programTextExtension));
     m_fCheckFileAttributes = GetBufferedProfileInt(buf.data(), TEXT("CheckFileAttributes"), 1) != 0;
     m_fLoadChapterTrack = GetBufferedProfileInt(buf.data(), TEXT("LoadChapterTrack"), 1) != 0;
     GetBufferedProfileString(buf.data(), TEXT("ChapterCutSec"), TEXT("_cut=*s"), m_chapterCutSec, _countof(m_chapterCutSec));
@@ -171,6 +172,7 @@ bool CReadOnlyMpeg4File::LoadSettings()
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("Meta"), m_metaName, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("VttExtension"), m_vttExtension, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("PsiDataExtension"), m_psiDataExtension, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ProgramTextExtension"), m_programTextExtension, iniPath);
         WritePrivateProfileInt(TEXT("MP4"), TEXT("CheckFileAttributes"), m_fCheckFileAttributes, iniPath);
         WritePrivateProfileInt(TEXT("MP4"), TEXT("LoadChapterTrack"), m_fLoadChapterTrack, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutSec"), m_chapterCutSec, iniPath);
@@ -183,6 +185,10 @@ bool CReadOnlyMpeg4File::LoadSettings()
 
 void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
 {
+    // PSI/SI反映時は省略
+    if (m_psiDataReader.IsOpen() || InitializeMetaInfoUsingProgramText(path)) {
+        return;
+    }
     if (m_metaName[0] && _tcslen(path) < MAX_PATH) {
         TCHAR metaPath[MAX_PATH];
         _tcscpy_s(metaPath, path);
@@ -228,6 +234,136 @@ void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
             m_totStart = FileTimeToUnixTime(ft);
         }
     }
+}
+
+bool CReadOnlyMpeg4File::InitializeMetaInfoUsingProgramText(LPCTSTR path)
+{
+    TCHAR programTextPath[MAX_PATH];
+    if (!m_programTextExtension[0] || _tcslen(path) >= _countof(programTextPath)) {
+        return false;
+    }
+    _tcscpy_s(programTextPath, path);
+    if (!::PathRenameExtension(programTextPath, m_programTextExtension)) {
+        return false;
+    }
+    if (m_fCheckFileAttributes) {
+        // 従ファイルにある隠し属性が主ファイルにも必要
+        DWORD hiddenAttr = ::GetFileAttributes(programTextPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        if (hiddenAttr) {
+            DWORD attr = ::GetFileAttributes(path);
+            if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
+                return false;
+            }
+        }
+    }
+    FILE *fp;
+    if (_tfopen_s(&fp, programTextPath, TEXT("rN")) != 0) {
+        return false;
+    }
+
+    enum { PG_START, PG_SERVICE_NAME, PG_EVENT_NAME, PG_INFO, PG_EXT_INFO, PG_EXT_INFO2, PG_INFO_END, PG_EXTRA, PG_EXTRA2, PG_TSID, PG_SID, PG_ERR, PG_END } state = PG_START;
+    bool fLongLine = false;
+    char buf[64];
+    size_t readFileCount = 0;
+    while (state != PG_ERR && state != PG_END && readFileCount < READ_FILE_MAX_SIZE && fgets(buf, _countof(buf), fp)) {
+        size_t bufLen = strlen(buf);
+        readFileCount += bufLen;
+        // 各行、前のほうだけ分かればよい
+        if (bufLen == 0 || buf[bufLen - 1] != '\n') {
+            if (bufLen == 0 || fLongLine) continue;
+            fLongLine = true;
+        }
+        else if (fLongLine) {
+            fLongLine = false;
+            continue;
+        }
+        else {
+            buf[--bufLen] = '\0';
+        }
+        if (state == PG_START && !strncmp(buf, "\xEF\xBB\xBF", 3)) {
+            // BOMを除去
+            std::copy(buf + 3, buf + bufLen + 1, buf);
+            bufLen -= 3;
+        }
+        bool fEmptyLine = bufLen == 0;
+        switch (state) {
+        case PG_START:
+            {
+                state = PG_ERR;
+                if (bufLen < 10 || buf[4] != TEXT('/') || buf[7] != TEXT('/')) break;
+                size_t i = 10 + strcspn(buf + 10, ")");
+                if (buf[i] != ')') break;
+                if (buf[++i] == ' ') ++i;
+                if (bufLen < i + 5 || buf[i + 2] != ':') break;
+                SYSTEMTIME st = {};
+                st.wYear = static_cast<WORD>(strtol(buf, nullptr, 10));
+                st.wMonth = static_cast<WORD>(strtol(buf + 5, nullptr, 10));
+                st.wDay = static_cast<WORD>(strtol(buf + 8, nullptr, 10));
+                st.wHour = static_cast<WORD>(strtol(buf + i, nullptr, 10));
+                st.wMinute = static_cast<WORD>(strtol(buf + i + 3, nullptr, 10));
+                if (bufLen >= i + 8 && buf[i + 5] == ':') {
+                    st.wSecond = static_cast<WORD>(strtol(buf + i + 6, nullptr, 10));
+                }
+                FILETIME ft;
+                if (!::SystemTimeToFileTime(&st, &ft)) break;
+                m_totStart = FileTimeToUnixTime(ft);
+                state = PG_SERVICE_NAME;
+            }
+            break;
+        case PG_SERVICE_NAME:
+            state = PG_EVENT_NAME;
+            break;
+        case PG_EVENT_NAME:
+            if (fEmptyLine) state = PG_INFO;
+            break;
+        case PG_INFO:
+            if (fEmptyLine) state = PG_INFO_END;
+            break;
+        case PG_EXT_INFO:
+            if (fEmptyLine) state = PG_EXT_INFO2;
+            break;
+        case PG_EXT_INFO2:
+            state = fEmptyLine ? PG_EXTRA : PG_EXT_INFO;
+            break;
+        case PG_INFO_END:
+            // 「詳細情報」(UTF-8またはShift_JIS)という文字列があればそこから空行2行まで詳細情報
+            if (!strcmp(buf, "\xE8\xA9\xB3\xE7\xB4\xB0\xE6\x83\x85\xE5\xA0\xB1") || !strcmp(buf, "\x8F\xDA\x8D\xD7\x8F\xEE\x95\xF1")) {
+                state = PG_EXT_INFO;
+                break;
+            }
+            state = PG_EXTRA;
+            // FALL THROUGH!
+        case PG_EXTRA:
+            if (strncmp(buf, "OriginalNetworkID:", 18)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_nid = max(static_cast<WORD>(strtol(buf + 18, nullptr, 10)), 1);
+            state = PG_TSID;
+            break;
+        case PG_EXTRA2:
+            if (fEmptyLine) state = PG_EXTRA;
+            break;
+        case PG_TSID:
+            if (strncmp(buf, "TransportStreamID:", 18)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_tsid = max(static_cast<WORD>(strtol(buf + 18, nullptr, 10)), 1);
+            state = PG_SID;
+            break;
+        case PG_SID:
+            if (strncmp(buf, "ServiceID:", 10)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_sid = max(static_cast<WORD>(strtol(buf + 10, nullptr, 10)), 1);
+            state = PG_END;
+            break;
+        }
+    }
+    fclose(fp);
+    return state == PG_END;
 }
 
 void CReadOnlyMpeg4File::LoadCaption(LPCTSTR path)
