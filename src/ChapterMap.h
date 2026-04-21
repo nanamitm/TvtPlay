@@ -17,6 +17,7 @@ public:
         std::vector<TCHAR> name;
         CHAPTER(LPCTSTR name_ = TEXT("")) : name(name_, name_ + _tcslen(name_) + 1) {}
         bool IsMatchPattern(LPCTSTR pattern, std::pair<size_t, size_t> *pos = nullptr) const;
+        int MatchWildcardPattern(LPCTSTR pattern) const;
         void SetPattern(LPCTSTR pattern, bool f);
     };
     CChapterMap();

@@ -358,6 +358,29 @@ const std::vector<std::pair<int, std::vector<WCHAR>>> *CTsSender::GetEmbeddedCha
 }
 
 
+LPCTSTR CTsSender::GetChapterCutSec() const
+{
+    CReadOnlyMpeg4File *mpeg4File = dynamic_cast<CReadOnlyMpeg4File*>(m_file.get());
+    return mpeg4File ? mpeg4File->GetChapterCutSec() : TEXT("");
+}
+
+
+LPCTSTR CTsSender::GetChapterCutMsec() const
+{
+    CReadOnlyMpeg4File *mpeg4File = dynamic_cast<CReadOnlyMpeg4File*>(m_file.get());
+    return mpeg4File ? mpeg4File->GetChapterCutMsec() : TEXT("");
+}
+
+
+void CTsSender::EditTot(const std::vector<std::pair<int, int>> &editList)
+{
+    CReadOnlyMpeg4File *mpeg4File = dynamic_cast<CReadOnlyMpeg4File*>(m_file.get());
+    if (mpeg4File) {
+        mpeg4File->EditTot(editList);
+    }
+}
+
+
 // Tickカウント補正の初期設定をする
 void CTsSender::SetupQpc()
 {

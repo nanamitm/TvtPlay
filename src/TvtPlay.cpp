@@ -1608,6 +1608,30 @@ bool CTvtPlay::Open(LPCTSTR fileName, int offset, int stretchID)
         }
         return false;
     });
+
+    if (m_tsSender.GetChapterCutSec()[0] || m_tsSender.GetChapterCutMsec()[0]) {
+        // チャプターにカット編集情報があれば抽出する
+        std::vector<std::pair<int, int>> cutList;
+        int addMsec = 0;
+        std::map<int, CChapterMap::CHAPTER>::const_iterator it = m_chapter.Get().begin();
+        for (; it != m_chapter.Get().end(); ++it) {
+            int cutMsec = it->second.MatchWildcardPattern(m_tsSender.GetChapterCutSec());
+            if (cutMsec >= 0) {
+                cutMsec = min(cutMsec, 24 * 3600) * 1000;
+            }
+            else {
+                cutMsec = it->second.MatchWildcardPattern(m_tsSender.GetChapterCutMsec());
+                cutMsec = min(cutMsec, 24 * 3600000);
+            }
+            if (cutMsec > 0) {
+                // 24時間まで
+                if ((addMsec += cutMsec) >= 24 * 3600000) break;
+                cutList.push_back(std::pair<int, int>(it->first, cutMsec));
+            }
+        }
+        m_tsSender.EditTot(cutList);
+    }
+
     if (!fSeeked && m_fSkipXChapter) {
         // 先頭から1秒未満のスキップ開始チャプターを解釈
         std::map<int, CChapterMap::CHAPTER>::const_iterator it = m_chapter.Get().begin();

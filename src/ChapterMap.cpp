@@ -35,6 +35,32 @@ bool CChapterMap::CHAPTER::IsMatchPattern(LPCTSTR pattern, std::pair<size_t, siz
     return false;
 }
 
+int CChapterMap::CHAPTER::MatchWildcardPattern(LPCTSTR pattern) const
+{
+    size_t patLen = _tcslen(pattern);
+    bool fPrefix = pattern[0] == TEXT('^');
+    bool fSuffix = patLen && pattern[patLen - 1] == TEXT('$');
+    pattern += fPrefix;
+    patLen -= fPrefix + fSuffix;
+    size_t wildcardPos = _tcscspn(pattern, TEXT("*"));
+    if (wildcardPos < patLen) {
+        size_t len = _tcslen(&name[0]);
+        if (len >= patLen) {
+            for (size_t i = 0; i <= (fPrefix ? 0 : len - patLen); ++i) {
+                if (!_tcsnicmp(&name[i], pattern, wildcardPos)) {
+                    size_t n = _tcsspn(&name[i + wildcardPos], TEXT("0123456789"));
+                    if (n && len - i - n >= patLen - 1 && (!fSuffix || len - i - n == patLen - 1) &&
+                        !_tcsnicmp(&name[i + wildcardPos + n], pattern + wildcardPos + 1, patLen - wildcardPos - 1))
+                    {
+                        return _tcstol(&name[i + wildcardPos], nullptr, 10);
+                    }
+                }
+            }
+        }
+    }
+    return -1;
+}
+
 void CChapterMap::CHAPTER::SetPattern(LPCTSTR pattern, bool f)
 {
     std::pair<size_t, size_t> pos;

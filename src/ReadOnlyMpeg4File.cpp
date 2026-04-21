@@ -37,6 +37,7 @@ bool CReadOnlyMpeg4File::Open(LPCTSTR path, int flags, const char *&errorMessage
 
 void CReadOnlyMpeg4File::Close()
 {
+    m_totEditList.clear();
     m_psiDataReader.Close();
     m_fp.reset();
 }
@@ -44,6 +45,33 @@ void CReadOnlyMpeg4File::Close()
 const std::vector<std::pair<int, std::vector<WCHAR>>> *CReadOnlyMpeg4File::GetEmbeddedChapterList() const
 {
     return m_fp && m_fHasChapter ? &m_chapterList : nullptr;
+}
+
+LPCTSTR CReadOnlyMpeg4File::GetChapterCutSec() const
+{
+    return m_fp ? m_chapterCutSec : TEXT("");
+}
+
+LPCTSTR CReadOnlyMpeg4File::GetChapterCutMsec() const
+{
+    return m_fp ? m_chapterCutMsec : TEXT("");
+}
+
+void CReadOnlyMpeg4File::EditTot(const std::vector<std::pair<int, int>> &editList)
+{
+    m_totEditList.clear();
+    for (size_t i = 0; i < editList.size(); ++i) {
+        if (m_totEditList.empty()) {
+            m_totEditList.push_back(std::make_pair(0, 0));
+        }
+        int blockIndex = editList[i].first / 100;
+        if (blockIndex >= m_totEditList.back().first) {
+            if (blockIndex > m_totEditList.back().first) {
+                m_totEditList.push_back(std::make_pair(blockIndex, m_totEditList.back().second));
+            }
+            m_totEditList.back().second += max(editList[i].second, 0);
+        }
+    }
 }
 
 int CReadOnlyMpeg4File::Read(BYTE *pBuf, int numToRead)
@@ -134,6 +162,8 @@ bool CReadOnlyMpeg4File::LoadSettings()
     GetBufferedProfileString(buf.data(), TEXT("PsiDataExtension"), TEXT(".psc"), m_psiDataExtension, _countof(m_psiDataExtension));
     m_fCheckFileAttributes = GetBufferedProfileInt(buf.data(), TEXT("CheckFileAttributes"), 1) != 0;
     m_fLoadChapterTrack = GetBufferedProfileInt(buf.data(), TEXT("LoadChapterTrack"), 1) != 0;
+    GetBufferedProfileString(buf.data(), TEXT("ChapterCutSec"), TEXT("_cut=*s"), m_chapterCutSec, _countof(m_chapterCutSec));
+    GetBufferedProfileString(buf.data(), TEXT("ChapterCutMsec"), TEXT("_cut=*ms"), m_chapterCutMsec, _countof(m_chapterCutMsec));
     GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), TEXT("0x000100020003"), m_iniBroadcastID, _countof(m_iniBroadcastID));
     GetBufferedProfileString(buf.data(), TEXT("Time"), TEXT(""), m_iniTime, _countof(m_iniTime));
     if (!buf[0]) {
@@ -143,6 +173,8 @@ bool CReadOnlyMpeg4File::LoadSettings()
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("PsiDataExtension"), m_psiDataExtension, iniPath);
         WritePrivateProfileInt(TEXT("MP4"), TEXT("CheckFileAttributes"), m_fCheckFileAttributes, iniPath);
         WritePrivateProfileInt(TEXT("MP4"), TEXT("LoadChapterTrack"), m_fLoadChapterTrack, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutSec"), m_chapterCutSec, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutMsec"), m_chapterCutMsec, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("BroadcastID"), m_iniBroadcastID, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("Time"), TEXT(""), iniPath);
     }
@@ -172,14 +204,12 @@ void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
     m_nid = max(LOWORD(broadcastID.HighPart), 1);
     m_tsid = max(HIWORD(broadcastID.LowPart), 1);
     m_sid = max(LOWORD(broadcastID.LowPart), 1);
-    m_totStart.QuadPart = 125911908000000000LL; // 2000-01-01T09:00:00
+    m_totStart = 946717200; // 2000-01-01T09:00:00
     if (!m_iniTime[0]) {
         // ファイルの更新日時をTOTとする
         FILETIME ft;
         if (::GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(m_fp.get()))), nullptr, nullptr, &ft)) {
-            m_totStart.LowPart = ft.dwLowDateTime;
-            m_totStart.HighPart = ft.dwHighDateTime;
-            m_totStart.QuadPart += 9 * 36000000000LL;
+            m_totStart = FileTimeToUnixTime(ft) + 9 * 3600;
         }
     }
     else if (_tcslen(m_iniTime) == 19 &&
@@ -195,8 +225,7 @@ void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
         st.wSecond = static_cast<WORD>(_tcstol(&m_iniTime[17], nullptr, 10));
         FILETIME ft;
         if (::SystemTimeToFileTime(&st, &ft)) {
-            m_totStart.LowPart = ft.dwLowDateTime;
-            m_totStart.HighPart = ft.dwHighDateTime;
+            m_totStart = FileTimeToUnixTime(ft);
         }
     }
 }
@@ -904,14 +933,8 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
             packet = &m_blockCache.back() - 187;
             CreateHeader(packet, 1, 1, (blockIndex / 20) & 0x0F, 0x0014);
             packet[4] = 0;
-            LARGE_INTEGER li;
-            li.QuadPart = m_totStart.QuadPart + 1000000LL * blockIndex;
-            FILETIME ft;
-            ft.dwLowDateTime = li.LowPart;
-            ft.dwHighDateTime = li.HighPart;
-            SYSTEMTIME st;
-            FileTimeToSystemTime(&ft, &st);
-            CreateTot(packet + 5, st);
+            auto it = std::upper_bound(m_totEditList.begin(), m_totEditList.end(), std::make_pair(static_cast<int>(blockIndex), INT_MAX));
+            CreateTot(packet + 5, m_totStart + static_cast<uint32_t>(blockIndex / 10) + (it == m_totEditList.begin() ? 0 : (--it)->second) / 1000);
         }
     }
 
@@ -1372,21 +1395,15 @@ size_t CReadOnlyMpeg4File::CreateEmptyEitPf(uint8_t *data, uint16_t nid, uint16_
     return 18;
 }
 
-size_t CReadOnlyMpeg4File::CreateTot(uint8_t *data, SYSTEMTIME st)
+size_t CReadOnlyMpeg4File::CreateTot(uint8_t *data, uint32_t t)
 {
     data[0] = 0x73;
     data[1] = 0x70;
     data[2] = 11;
-    data[5] = ((st.wHour / 10) << 4 | (st.wHour % 10)) & 0xFF;
-    data[6] = ((st.wMinute / 10) << 4 | (st.wMinute % 10)) & 0xFF;
-    data[7] = ((st.wSecond / 10) << 4 | (st.wSecond % 10)) & 0xFF;
-    st.wHour = st.wMinute = st.wSecond = 0;
-    FILETIME ft;
-    ::SystemTimeToFileTime(&st, &ft);
-    LARGE_INTEGER li;
-    li.LowPart = ft.dwLowDateTime;
-    li.HighPart = ft.dwHighDateTime;
-    int64_t mjd = (li.QuadPart - 81377568000000000LL) / (24 * 60 * 60 * 10000000LL);
+    data[5] = ((t / 3600 % 24 / 10) << 4 | (t / 3600 % 24 % 10)) & 0xFF;
+    data[6] = ((t / 60 % 60 / 10) << 4 | (t / 60 % 10)) & 0xFF;
+    data[7] = ((t % 60 / 10) << 4 | (t % 10)) & 0xFF;
+    uint32_t mjd = 40587 + t / (24 * 60 * 60);
     data[3] = mjd >> 8 & 0xFF;
     data[4] = mjd & 0xFF;
     data[8] = 0xF0;
