@@ -420,6 +420,10 @@ void CTvtPlay::LoadSettings()
         GetBufferedProfileString(pBuf, TEXT("PopupPattern"), TEXT("%RecordFolder%*.ts"), m_szPopupPattern, _countof(m_szPopupPattern));
         m_playlistPopupMax  = GetBufferedProfileInt(pBuf, TEXT("PlaylistPopupMax"), 30);
         GetBufferedProfileString(pBuf, TEXT("ChaptersFolderName"), TEXT("chapters"), m_szChaptersDirName, _countof(m_szChaptersDirName));
+        GetBufferedProfileString(pBuf, TEXT("ChapterIn"), CChapterMap::DEFAULT_CHAPTER_IN, m_chapter.GetChapterIn(), _countof(m_chapter.GetChapterIn()));
+        GetBufferedProfileString(pBuf, TEXT("ChapterOut"), CChapterMap::DEFAULT_CHAPTER_OUT, m_chapter.GetChapterOut(), _countof(m_chapter.GetChapterOut()));
+        GetBufferedProfileString(pBuf, TEXT("ChapterXIn"), CChapterMap::DEFAULT_CHAPTER_X_IN, m_chapter.GetChapterXIn(), _countof(m_chapter.GetChapterXIn()));
+        GetBufferedProfileString(pBuf, TEXT("ChapterXOut"), CChapterMap::DEFAULT_CHAPTER_X_OUT, m_chapter.GetChapterXOut(), _countof(m_chapter.GetChapterXOut()));
 #ifdef EN_SWC
         GetBufferedProfileString(pBuf, TEXT("CaptionDll"), TEXT("Plugins\\TvtPlay_Caption.dll"), m_szCaptionDllPath, _countof(m_szCaptionDllPath));
         m_slowerWithCaption = GetBufferedProfileInt(pBuf, TEXT("SlowerWithCaption"), 0);
@@ -635,6 +639,10 @@ void CTvtPlay::SaveSettings(bool fWriteDefault) const
         ::WritePrivateProfileString(SETTINGS, TEXT("PopupPattern"), m_szPopupPattern, m_szIniFileName);
         WritePrivateProfileInt(SETTINGS, TEXT("PlaylistPopupMax"), m_playlistPopupMax, m_szIniFileName);
         ::WritePrivateProfileString(SETTINGS, TEXT("ChaptersFolderName"), m_szChaptersDirName, m_szIniFileName);
+        ::WritePrivateProfileString(SETTINGS, TEXT("ChapterIn"), m_chapter.GetChapterIn(), m_szIniFileName);
+        ::WritePrivateProfileString(SETTINGS, TEXT("ChapterOut"), m_chapter.GetChapterOut(), m_szIniFileName);
+        ::WritePrivateProfileString(SETTINGS, TEXT("ChapterXIn"), m_chapter.GetChapterXIn(), m_szIniFileName);
+        ::WritePrivateProfileString(SETTINGS, TEXT("ChapterXOut"), m_chapter.GetChapterXOut(), m_szIniFileName);
 #ifdef EN_SWC
         ::WritePrivateProfileString(SETTINGS, TEXT("CaptionDll"), m_szCaptionDllPath, m_szIniFileName);
     }
@@ -1423,10 +1431,10 @@ void CTvtPlay::EditChapterWithPopup(int pos, const POINT &pt, UINT flags)
                     ch.first/3600000, ch.first/60000%60, ch.first/1000%60, ch.first%1000,
                     ch.second.name.data());
         ::ModifyMenu(hmenu, IDM_CHAPTER_EDIT, MF_STRING, IDM_CHAPTER_EDIT, str);
-        ::CheckMenuItem(hmenu, IDM_CHAPTER_IN, ch.second.IsIn() ? MF_CHECKED : MF_UNCHECKED);
-        ::CheckMenuItem(hmenu, IDM_CHAPTER_OUT, ch.second.IsOut() ? MF_CHECKED : MF_UNCHECKED);
-        ::CheckMenuItem(hmenu, IDM_CHAPTER_X_IN, ch.second.IsIn() && ch.second.IsX() ? MF_CHECKED : MF_UNCHECKED);
-        ::CheckMenuItem(hmenu, IDM_CHAPTER_X_OUT, ch.second.IsOut() && ch.second.IsX() ? MF_CHECKED : MF_UNCHECKED);
+        ::CheckMenuItem(hmenu, IDM_CHAPTER_IN, ch.second.IsMatchPattern(m_chapter.GetChapterIn()) ? MF_CHECKED : MF_UNCHECKED);
+        ::CheckMenuItem(hmenu, IDM_CHAPTER_OUT, ch.second.IsMatchPattern(m_chapter.GetChapterOut()) ? MF_CHECKED : MF_UNCHECKED);
+        ::CheckMenuItem(hmenu, IDM_CHAPTER_X_IN, ch.second.IsMatchPattern(m_chapter.GetChapterXIn()) ? MF_CHECKED : MF_UNCHECKED);
+        ::CheckMenuItem(hmenu, IDM_CHAPTER_X_OUT, ch.second.IsMatchPattern(m_chapter.GetChapterXOut()) ? MF_CHECKED : MF_UNCHECKED);
         selID = TrackPopup(hmenu, pt, flags);
         ::DestroyMenu(hTopMenu);
     }
@@ -1465,30 +1473,36 @@ void CTvtPlay::EditChapterWithPopup(int pos, const POINT &pt, UINT flags)
         m_chapter.Erase(pos);
         break;
     case IDM_CHAPTER_IN:
-        ch.second.SetOut(false);
-        ch.second.SetIn(!ch.second.IsIn());
+        ch.second.SetPattern(m_chapter.GetChapterOut(), false);
+        ch.second.SetPattern(m_chapter.GetChapterIn(), !ch.second.IsMatchPattern(m_chapter.GetChapterIn()));
         m_chapter.Insert(ch, pos);
         break;
     case IDM_CHAPTER_OUT:
-        ch.second.SetIn(false);
-        ch.second.SetOut(!ch.second.IsOut());
+        ch.second.SetPattern(m_chapter.GetChapterIn(), false);
+        ch.second.SetPattern(m_chapter.GetChapterOut(), !ch.second.IsMatchPattern(m_chapter.GetChapterOut()));
         m_chapter.Insert(ch, pos);
         break;
     case IDM_CHAPTER_X_IN:
         {
-            bool fSet = ch.second.IsIn() && ch.second.IsX();
-            ch.second.SetOut(false);
-            ch.second.SetIn(!fSet);
-            ch.second.SetX(!fSet);
+            bool fSet = ch.second.IsMatchPattern(m_chapter.GetChapterXIn());
+            if (!fSet) {
+                if (ch.second.IsMatchPattern(m_chapter.GetChapterXOut())) ch.second.SetPattern(m_chapter.GetChapterXOut(), false);
+                else if (ch.second.IsMatchPattern(m_chapter.GetChapterOut())) ch.second.SetPattern(m_chapter.GetChapterOut(), false);
+                else ch.second.SetPattern(m_chapter.GetChapterIn(), false);
+            }
+            ch.second.SetPattern(m_chapter.GetChapterXIn(), !fSet);
             m_chapter.Insert(ch, pos);
         }
         break;
     case IDM_CHAPTER_X_OUT:
         {
-            bool fSet = ch.second.IsOut() && ch.second.IsX();
-            ch.second.SetIn(false);
-            ch.second.SetOut(!fSet);
-            ch.second.SetX(!fSet);
+            bool fSet = ch.second.IsMatchPattern(m_chapter.GetChapterXOut());
+            if (!fSet) {
+                if (ch.second.IsMatchPattern(m_chapter.GetChapterXIn())) ch.second.SetPattern(m_chapter.GetChapterXIn(), false);
+                else if (ch.second.IsMatchPattern(m_chapter.GetChapterIn())) ch.second.SetPattern(m_chapter.GetChapterIn(), false);
+                else ch.second.SetPattern(m_chapter.GetChapterOut(), false);
+            }
+            ch.second.SetPattern(m_chapter.GetChapterXOut(), !fSet);
             m_chapter.Insert(ch, pos);
         }
         break;
@@ -1589,10 +1603,10 @@ bool CTvtPlay::Open(LPCTSTR fileName, int offset, int stretchID)
         // 先頭から1秒未満のスキップ開始チャプターを解釈
         std::map<int, CChapterMap::CHAPTER>::const_iterator it = m_chapter.Get().begin();
         for (; it != m_chapter.Get().end() && it->first < 1000; ++it) {
-            if (it->second.IsIn() && it->second.IsX()) {
+            if (it->second.IsMatchPattern(m_chapter.GetChapterXIn())) {
                 for (++it; it != m_chapter.Get().end(); ++it) {
                     // スキップ終了チャプターまでシーク
-                    if (it->second.IsOut() && it->second.IsX()) {
+                    if (it->second.IsMatchPattern(m_chapter.GetChapterXOut())) {
                         m_tsSender.Seek(it->first);
                         break;
                     }
@@ -1859,8 +1873,8 @@ void CTvtPlay::BeginWatchingNextChapter(bool fDoDelay)
             if (pos >= 0) {
                 std::map<int, CChapterMap::CHAPTER>::const_iterator it = m_chapter.Get().upper_bound(pos);
                 for (; it != m_chapter.Get().end(); ++it) {
-                    if (m_fSkipXChapter && it->second.IsIn() && it->second.IsX() ||
-                        m_fRepeatChapter && it->second.IsOut())
+                    if (m_fSkipXChapter && it->second.IsMatchPattern(m_chapter.GetChapterXIn()) ||
+                        m_fRepeatChapter && it->second.IsMatchPattern(m_chapter.GetChapterOut()))
                     {
                         ::PostThreadMessage(m_threadID, WM_TS_WATCH_POS_GT, 0, it->first + m_supposedDispDelay);
                         break;
@@ -2518,23 +2532,23 @@ LRESULT CALLBACK CTvtPlay::FrameWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             std::map<int, CChapterMap::CHAPTER>::const_iterator it =
                 pThis->m_chapter.Get().find(static_cast<int>(lParam) - pThis->m_supposedDispDelay);
             if (pThis->m_fSkipXChapter && it != pThis->m_chapter.Get().end() &&
-                it->second.IsIn() && it->second.IsX())
+                it->second.IsMatchPattern(pThis->m_chapter.GetChapterXIn()))
             {
                 for (++it; it != pThis->m_chapter.Get().end(); ++it) {
                     // スキップ終了チャプターまでシーク
-                    if (it->second.IsOut() && it->second.IsX()) {
+                    if (it->second.IsMatchPattern(pThis->m_chapter.GetChapterXOut())) {
                         pThis->SeekAbsolute(it->first);
                         break;
                     }
                 }
             }
             else if (pThis->m_fRepeatChapter && it != pThis->m_chapter.Get().end() &&
-                     it->second.IsOut() && it != pThis->m_chapter.Get().begin())
+                     it->second.IsMatchPattern(pThis->m_chapter.GetChapterOut()) && it != pThis->m_chapter.Get().begin())
             {
-                bool isX = it->second.IsX();
+                bool isX = it->second.IsMatchPattern(pThis->m_chapter.GetChapterXOut());
                 do {
                     // 対応する開始チャプターまでシーク
-                    if ((--it)->second.IsIn() && (isX && it->second.IsX() || !isX && !it->second.IsX())) {
+                    if ((--it)->second.IsMatchPattern(pThis->m_chapter.GetChapterIn()) && isX == it->second.IsMatchPattern(pThis->m_chapter.GetChapterXIn())) {
                         pThis->SeekAbsolute(it->first);
                         break;
                     }

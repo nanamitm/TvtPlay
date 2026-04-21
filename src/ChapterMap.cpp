@@ -11,6 +11,55 @@
 #define ASSERT assert
 #endif
 
+const LPCTSTR CChapterMap::DEFAULT_CHAPTER_IN = TEXT("^i");
+const LPCTSTR CChapterMap::DEFAULT_CHAPTER_OUT = TEXT("^o");
+const LPCTSTR CChapterMap::DEFAULT_CHAPTER_X_IN = TEXT("^ix");
+const LPCTSTR CChapterMap::DEFAULT_CHAPTER_X_OUT = TEXT("^ox");
+
+bool CChapterMap::CHAPTER::IsMatchPattern(LPCTSTR pattern, std::pair<size_t, size_t> *pos) const
+{
+    size_t patLen = _tcslen(pattern);
+    bool fPrefix = pattern[0] == TEXT('^');
+    bool fSuffix = patLen && pattern[patLen - 1] == TEXT('$');
+    pattern += fPrefix;
+    patLen -= fPrefix + fSuffix;
+    size_t len = _tcslen(&name[0]);
+    if (len >= patLen) {
+        for (size_t i = (fSuffix ? len - patLen : 0); i <= (fPrefix ? 0 : len - patLen); ++i) {
+            if (!_tcsnicmp(&name[i], pattern, patLen)) {
+                if (pos) *pos = std::make_pair(i, i + patLen);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void CChapterMap::CHAPTER::SetPattern(LPCTSTR pattern, bool f)
+{
+    std::pair<size_t, size_t> pos;
+    if (f && !IsMatchPattern(pattern)) {
+        size_t patLen = _tcslen(pattern);
+        if (pattern[0] == TEXT('^')) {
+            if (pattern[patLen - 1] == TEXT('$')) {
+                // 完全
+                name.assign(pattern + 1, pattern + patLen - 1);
+            }
+            else {
+                // 前方
+                name.insert(name.begin(), pattern + 1, pattern + patLen);
+            }
+        }
+        else {
+            // 後方or部分
+            name.insert(name.begin() + _tcslen(&name[0]), pattern, pattern + patLen - (patLen && pattern[patLen - 1] == TEXT('$') ? 1 : 0));
+        }
+    }
+    else if (!f && IsMatchPattern(pattern, &pos)) {
+        name.erase(name.begin() + pos.first, name.begin() + pos.second);
+    }
+}
+
 CChapterMap::CChapterMap()
     : m_hDir(INVALID_HANDLE_VALUE)
     , m_hEvent(nullptr)
@@ -18,6 +67,10 @@ CChapterMap::CChapterMap()
     , m_retryCount(0)
 {
     m_path[0] = 0;
+    _tcscpy_s(m_chapterIn, DEFAULT_CHAPTER_IN);
+    _tcscpy_s(m_chapterOut, DEFAULT_CHAPTER_OUT);
+    _tcscpy_s(m_chapterXIn, DEFAULT_CHAPTER_X_IN);
+    _tcscpy_s(m_chapterXOut, DEFAULT_CHAPTER_X_OUT);
 }
 
 CChapterMap::~CChapterMap()
