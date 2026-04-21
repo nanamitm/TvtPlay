@@ -1,5 +1,9 @@
 ﻿#include <Windows.h>
+#include <algorithm>
 #include "PsiArchiveReader.h"
+
+#define my_fseek _fseeki64
+#define my_ftell _ftelli64
 
 bool CPsiArchiveReader::Open(LPCTSTR path)
 {
@@ -92,7 +96,7 @@ bool CPsiArchiveReader::ReadCodeList(const std::function<void(int, uint16_t, uin
                 dict[i++] = lastDict[lastIndex];
             }
         }
-        _fseeki64(m_fp.get(), (dictionaryDataSize + 1) / 2 * 2, SEEK_CUR);
+        my_fseek(m_fp.get(), (dictionaryDataSize + 1) / 2 * 2, SEEK_CUR);
 
         uint32_t currTime = UNKNOWN_TIME;
         uint32_t codeCount = 0;
@@ -168,7 +172,7 @@ void CPsiArchiveReader::Read(int beginTimeMsec, int endTimeMsec,
         // 前方に移動するとき、現在のチャンクの開始時間以後への移動なら
         if (beginTimeMsec >= m_chunkBeginTimeMsec) {
             // 現在のチャンクを読み直し
-            _fseeki64(m_fp.get(), m_chunkFileOffset, SEEK_SET);
+            my_fseek(m_fp.get(), m_chunkFileOffset, SEEK_SET);
             m_readingTimeMsec = m_chunkBeginTimeMsec - 1;
             m_chunkBeginTimeMsec = -1;
             m_timeListIndex = 0;
@@ -360,7 +364,7 @@ int64_t CPsiArchiveReader::MoveToNextChunk()
     if (dictionaryDataSize > 0 || (fAlignment && fread(&alignment, 1, 1, m_fp.get()) != 1)) {
         return -1;
     }
-    return _ftelli64(m_fp.get());
+    return my_ftell(m_fp.get());
 }
 
 bool CPsiArchiveReader::ReadHeader(FILE *fp, std::vector<uint32_t> &timeList, uint16_t &dictionaryLen, uint16_t &dictionaryWindowLen,
@@ -370,7 +374,7 @@ bool CPsiArchiveReader::ReadHeader(FILE *fp, std::vector<uint32_t> &timeList, ui
     uint8_t magicAndReserved[10];
     uint16_t timeListLen;
     if (fread(&magicAndReserved, 1, 10, fp) != 10 ||
-        memcmp(magicAndReserved, HEADER_MAGIC, sizeof(HEADER_MAGIC)) != 0 ||
+        !std::equal(HEADER_MAGIC, HEADER_MAGIC + sizeof(HEADER_MAGIC), magicAndReserved) ||
         fread(&timeListLen, sizeof(timeListLen), 1, fp) != 1 ||
         fread(&dictionaryLen, sizeof(dictionaryLen), 1, fp) != 1 ||
         fread(&dictionaryWindowLen, sizeof(dictionaryWindowLen), 1, fp) != 1 ||

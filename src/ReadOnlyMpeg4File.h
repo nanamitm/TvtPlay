@@ -29,7 +29,7 @@ class CReadOnlyMpeg4File : public IReadOnlyFile
     static const uint16_t DISPLACED_PID = 0x1E00;
     static const uint32_t PSI_MAX_STREAMS = 32;
 public:
-    CReadOnlyMpeg4File() : m_fp(nullptr, fclose) {}
+    CReadOnlyMpeg4File() {}
     ~CReadOnlyMpeg4File() { Close(); }
     bool Open(LPCTSTR path, int flags, const char *&errorMessage);
     void Close();
@@ -62,15 +62,15 @@ private:
     void LoadCaption(LPCTSTR path);
     void OpenPsiData(LPCTSTR path);
     bool InitializeTable(const char *&errorMessage);
-    bool ReadVideoSampleDesc(int64_t trakBoxPos, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const;
-    bool ReadAudioSampleDesc(int64_t trakBoxPos, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const;
-    bool ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
+    bool ReadVideoSampleDesc(std::pair<int64_t, int64_t> trak, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const;
+    bool ReadAudioSampleDesc(std::pair<int64_t, int64_t> trak, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const;
+    bool ReadSampleTable(std::pair<int64_t, int64_t> trak, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
                          std::vector<int64_t> &stts, std::vector<uint32_t> *ctts, int64_t &editTimeOffset, std::vector<uint8_t> &buf) const;
     bool InitializeBlockList(const char *&errorMessage);
     bool ReadCurrentBlock();
     bool InitializePsiCounterInfo(const char *&errorMessage);
-    std::pair<int64_t, int64_t> FindBoxPosition(const char *path, int64_t currentBoxPos) const;
-    int ReadBox(const char *path, std::vector<uint8_t> &data, int64_t currentBoxPos) const;
+    std::pair<int64_t, int64_t> FindBox(const char *path, std::pair<int64_t, int64_t> posAndSize) const;
+    int ReadBox(const char *path, std::vector<uint8_t> &data, std::pair<int64_t, int64_t> posAndSize) const;
     int ReadSample(size_t index, const std::vector<int64_t> &stso, const std::vector<uint32_t> &stsz, std::vector<uint8_t> *data) const;
     static void AddTsPacketsFromPsi(std::vector<uint8_t> &buf, const uint8_t *psi, size_t psiSize, uint8_t &counter, uint16_t pid);
     static bool Add16TsPacketsFromPsi(std::vector<uint8_t> &buf, const uint8_t *psi, size_t psiSize, uint16_t pid);
@@ -91,7 +91,7 @@ private:
     static size_t NalFileToByte(std::vector<uint8_t> &data, bool &fIdr, bool fHevc);
     static uint32_t CalcCrc32(const uint8_t *data, size_t len, uint32_t crc = 0xFFFFFFFF);
 
-    std::unique_ptr<FILE, decltype(&fclose)> m_fp;
+    std::unique_ptr<FILE, fclose_deleter> m_fp;
     TCHAR m_metaName[MAX_PATH];
     TCHAR m_vttExtension[16];
     TCHAR m_psiDataExtension[16];
