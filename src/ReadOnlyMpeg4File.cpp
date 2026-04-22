@@ -188,52 +188,63 @@ bool CReadOnlyMpeg4File::LoadSettings()
 void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
 {
     // PSI/SI反映時は省略
-    if (m_psiDataReader.IsOpen() || InitializeMetaInfoUsingProgramText(path)) {
+    if (m_psiDataReader.IsOpen()) {
         return;
     }
+    TCHAR szSpecBroadcastID[15] = {};
+    TCHAR szSpecTime[20] = {};
     if (m_metaName[0] && _tcslen(path) < MAX_PATH) {
         TCHAR metaPath[MAX_PATH];
         _tcscpy_s(metaPath, path);
         if (::PathRemoveFileSpec(metaPath) && ::PathAppend(metaPath, m_metaName) && ValidateFileAttributes(path, metaPath)) {
-            // "Meta"設定の[*]セクションで上書き
+            // "Meta"設定の[*]セクション
             std::vector<TCHAR> buf = GetPrivateProfileSectionBuffer(TEXT("*"), metaPath);
             TCHAR szBroadcastID[15];
-            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), m_iniBroadcastID, szBroadcastID, _countof(szBroadcastID));
+            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), TEXT(""), szBroadcastID, _countof(szBroadcastID));
             TCHAR szTime[20];
-            GetBufferedProfileString(buf.data(), TEXT("Time"), m_iniTime, szTime, _countof(szTime));
+            GetBufferedProfileString(buf.data(), TEXT("Time"), TEXT(""), szTime, _countof(szTime));
             // "Meta"設定の[ファイル名]セクションで上書き
             buf = GetPrivateProfileSectionBuffer(::PathFindFileName(path), metaPath);
-            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), szBroadcastID, m_iniBroadcastID, _countof(m_iniBroadcastID));
-            GetBufferedProfileString(buf.data(), TEXT("Time"), szTime, m_iniTime, _countof(m_iniTime));
+            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), szBroadcastID, szSpecBroadcastID, _countof(szSpecBroadcastID));
+            GetBufferedProfileString(buf.data(), TEXT("Time"), szTime, szSpecTime, _countof(szSpecTime));
         }
     }
-    LARGE_INTEGER broadcastID = {};
-    ::StrToInt64Ex(m_iniBroadcastID, STIF_SUPPORT_HEX, &broadcastID.QuadPart);
-    m_nid = max(LOWORD(broadcastID.HighPart), 1);
-    m_tsid = max(HIWORD(broadcastID.LowPart), 1);
-    m_sid = max(LOWORD(broadcastID.LowPart), 1);
-    m_totStart = 946717200; // 2000-01-01T09:00:00
-    if (!m_iniTime[0]) {
-        // ファイルの更新日時をTOTとする
-        FILETIME ft;
-        if (::GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(m_fp.get()))), nullptr, nullptr, &ft)) {
-            m_totStart = FileTimeToUnixTime(ft) + 9 * 3600;
-        }
+    // "Meta"設定は番組情報ファイルよりも優先
+    bool fInitialized = (!szSpecBroadcastID[0] || !szSpecTime[0]) && InitializeMetaInfoUsingProgramText(path);
+    if (szSpecBroadcastID[0] || !fInitialized) {
+        LARGE_INTEGER broadcastID = {};
+        ::StrToInt64Ex(szSpecBroadcastID[0] ? szSpecBroadcastID : m_iniBroadcastID, STIF_SUPPORT_HEX, &broadcastID.QuadPart);
+        m_nid = max(LOWORD(broadcastID.HighPart), 1);
+        m_tsid = max(HIWORD(broadcastID.LowPart), 1);
+        m_sid = max(LOWORD(broadcastID.LowPart), 1);
     }
-    else if (_tcslen(m_iniTime) == 19 &&
-             m_iniTime[4] == TEXT('-') && m_iniTime[7] == TEXT('-') &&
-             m_iniTime[10] == TEXT('T') && m_iniTime[13] == TEXT(':') && m_iniTime[16] == TEXT(':'))
-    {
-        SYSTEMTIME st = {};
-        st.wYear = static_cast<WORD>(_tcstol(&m_iniTime[0], nullptr, 10));
-        st.wMonth = static_cast<WORD>(_tcstol(&m_iniTime[5], nullptr, 10));
-        st.wDay = static_cast<WORD>(_tcstol(&m_iniTime[8], nullptr, 10));
-        st.wHour = static_cast<WORD>(_tcstol(&m_iniTime[11], nullptr, 10));
-        st.wMinute = static_cast<WORD>(_tcstol(&m_iniTime[14], nullptr, 10));
-        st.wSecond = static_cast<WORD>(_tcstol(&m_iniTime[17], nullptr, 10));
-        FILETIME ft;
-        if (::SystemTimeToFileTime(&st, &ft)) {
-            m_totStart = FileTimeToUnixTime(ft);
+    if (szSpecTime[0] || !fInitialized) {
+        m_totStart = 946717200; // 2000-01-01T09:00:00
+        if (!szSpecTime[0]) {
+            _tcscpy_s(szSpecTime, m_iniTime);
+        }
+        if (!szSpecTime[0]) {
+            // ファイルの更新日時をTOTとする
+            FILETIME ft;
+            if (::GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(m_fp.get()))), nullptr, nullptr, &ft)) {
+                m_totStart = FileTimeToUnixTime(ft) + 9 * 3600;
+            }
+        }
+        else if (_tcslen(szSpecTime) == 19 &&
+                 szSpecTime[4] == TEXT('-') && szSpecTime[7] == TEXT('-') &&
+                 szSpecTime[10] == TEXT('T') && szSpecTime[13] == TEXT(':') && szSpecTime[16] == TEXT(':'))
+        {
+            SYSTEMTIME st = {};
+            st.wYear = static_cast<WORD>(_tcstol(&szSpecTime[0], nullptr, 10));
+            st.wMonth = static_cast<WORD>(_tcstol(&szSpecTime[5], nullptr, 10));
+            st.wDay = static_cast<WORD>(_tcstol(&szSpecTime[8], nullptr, 10));
+            st.wHour = static_cast<WORD>(_tcstol(&szSpecTime[11], nullptr, 10));
+            st.wMinute = static_cast<WORD>(_tcstol(&szSpecTime[14], nullptr, 10));
+            st.wSecond = static_cast<WORD>(_tcstol(&szSpecTime[17], nullptr, 10));
+            FILETIME ft;
+            if (::SystemTimeToFileTime(&st, &ft)) {
+                m_totStart = FileTimeToUnixTime(ft);
+            }
         }
     }
 }
