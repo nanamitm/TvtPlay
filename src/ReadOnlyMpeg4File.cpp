@@ -157,6 +157,7 @@ bool CReadOnlyMpeg4File::LoadSettings()
     }
     // プラグイン設定の[MP4]セクション
     std::vector<TCHAR> buf = GetPrivateProfileSectionBuffer(TEXT("MP4"), iniPath);
+    bool fEnabled = GetBufferedProfileInt(buf.data(), TEXT("Enabled"), 1) != 0;
     GetBufferedProfileString(buf.data(), TEXT("Meta"), TEXT("metadata.ini"), m_metaName, _countof(m_metaName));
     GetBufferedProfileString(buf.data(), TEXT("VttExtension"), TEXT(".vtt"), m_vttExtension, _countof(m_vttExtension));
     GetBufferedProfileString(buf.data(), TEXT("PsiDataExtension"), TEXT(".psc"), m_psiDataExtension, _countof(m_psiDataExtension));
@@ -167,8 +168,9 @@ bool CReadOnlyMpeg4File::LoadSettings()
     GetBufferedProfileString(buf.data(), TEXT("ChapterCutMsec"), TEXT("_cut=*ms"), m_chapterCutMsec, _countof(m_chapterCutMsec));
     GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), TEXT("0x000100020003"), m_iniBroadcastID, _countof(m_iniBroadcastID));
     GetBufferedProfileString(buf.data(), TEXT("Time"), TEXT(""), m_iniTime, _countof(m_iniTime));
-    if (!buf[0]) {
-        WritePrivateProfileInt(TEXT("MP4"), TEXT("Enabled"), 1, iniPath);
+    if (GetBufferedProfileInt(buf.data(), TEXT("Version"), 0) < 1) {
+        WritePrivateProfileInt(TEXT("MP4"), TEXT("Version"), 1, iniPath);
+        WritePrivateProfileInt(TEXT("MP4"), TEXT("Enabled"), fEnabled, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("Meta"), m_metaName, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("VttExtension"), m_vttExtension, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("PsiDataExtension"), m_psiDataExtension, iniPath);
@@ -178,9 +180,9 @@ bool CReadOnlyMpeg4File::LoadSettings()
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutSec"), m_chapterCutSec, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutMsec"), m_chapterCutMsec, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("BroadcastID"), m_iniBroadcastID, iniPath);
-        ::WritePrivateProfileString(TEXT("MP4"), TEXT("Time"), TEXT(""), iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("Time"), m_iniTime, iniPath);
     }
-    return GetBufferedProfileInt(buf.data(), TEXT("Enabled"), 1) != 0;
+    return fEnabled;
 }
 
 void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
@@ -192,7 +194,7 @@ void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
     if (m_metaName[0] && _tcslen(path) < MAX_PATH) {
         TCHAR metaPath[MAX_PATH];
         _tcscpy_s(metaPath, path);
-        if (::PathRemoveFileSpec(metaPath) && ::PathAppend(metaPath, m_metaName)) {
+        if (::PathRemoveFileSpec(metaPath) && ::PathAppend(metaPath, m_metaName) && ValidateFileAttributes(path, metaPath)) {
             // "Meta"設定の[*]セクションで上書き
             std::vector<TCHAR> buf = GetPrivateProfileSectionBuffer(TEXT("*"), metaPath);
             TCHAR szBroadcastID[15];
@@ -243,18 +245,8 @@ bool CReadOnlyMpeg4File::InitializeMetaInfoUsingProgramText(LPCTSTR path)
         return false;
     }
     _tcscpy_s(programTextPath, path);
-    if (!::PathRenameExtension(programTextPath, m_programTextExtension)) {
+    if (!::PathRenameExtension(programTextPath, m_programTextExtension) || !ValidateFileAttributes(path, programTextPath)) {
         return false;
-    }
-    if (m_fCheckFileAttributes) {
-        // 従ファイルにある隠し属性が主ファイルにも必要
-        DWORD hiddenAttr = ::GetFileAttributes(programTextPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
-        if (hiddenAttr) {
-            DWORD attr = ::GetFileAttributes(path);
-            if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
-                return false;
-            }
-        }
     }
     FILE *fp;
     if (_tfopen_s(&fp, programTextPath, TEXT("rN")) != 0) {
@@ -375,18 +367,8 @@ void CReadOnlyMpeg4File::LoadCaption(LPCTSTR path)
         return;
     }
     _tcscpy_s(vttPath, path);
-    if (!::PathRenameExtension(vttPath, m_vttExtension)) {
+    if (!::PathRenameExtension(vttPath, m_vttExtension) || !ValidateFileAttributes(path, vttPath)) {
         return;
-    }
-    if (m_fCheckFileAttributes) {
-        // 従ファイルにある隠し属性が主ファイルにも必要
-        DWORD hiddenAttr = ::GetFileAttributes(vttPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
-        if (hiddenAttr) {
-            DWORD attr = ::GetFileAttributes(path);
-            if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
-                return;
-            }
-        }
     }
     LoadWebVttB24Caption(vttPath, m_captionList);
 }
@@ -398,20 +380,25 @@ void CReadOnlyMpeg4File::OpenPsiData(LPCTSTR path)
         return;
     }
     _tcscpy_s(psiDataPath, path);
-    if (!::PathRenameExtension(psiDataPath, m_psiDataExtension)) {
+    if (!::PathRenameExtension(psiDataPath, m_psiDataExtension) || !ValidateFileAttributes(path, psiDataPath)) {
         return;
     }
+    m_psiDataReader.Open(psiDataPath);
+}
+
+bool CReadOnlyMpeg4File::ValidateFileAttributes(LPCTSTR path, LPCTSTR attachedPath) const
+{
     if (m_fCheckFileAttributes) {
         // 従ファイルにある隠し属性が主ファイルにも必要
-        DWORD hiddenAttr = ::GetFileAttributes(psiDataPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        DWORD hiddenAttr = ::GetFileAttributes(attachedPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
         if (hiddenAttr) {
             DWORD attr = ::GetFileAttributes(path);
             if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
-                return;
+                return false;
             }
         }
     }
-    m_psiDataReader.Open(psiDataPath);
+    return true;
 }
 
 bool CReadOnlyMpeg4File::InitializeTable(const char *&errorMessage)

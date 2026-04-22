@@ -70,6 +70,7 @@ void CChapterMap::CHAPTER::SetPattern(LPCTSTR pattern, bool f)
             if (pattern[patLen - 1] == TEXT('$')) {
                 // 完全
                 name.assign(pattern + 1, pattern + patLen - 1);
+                name.push_back(TEXT('\0'));
             }
             else {
                 // 前方

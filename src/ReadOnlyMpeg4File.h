@@ -68,6 +68,7 @@ private:
     bool InitializeMetaInfoUsingProgramText(LPCTSTR path);
     void LoadCaption(LPCTSTR path);
     void OpenPsiData(LPCTSTR path);
+    bool ValidateFileAttributes(LPCTSTR path, LPCTSTR attachedPath) const;
     bool InitializeTable(const char *&errorMessage);
     bool ReadVideoSampleDesc(std::pair<int64_t, int64_t> trak, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const;
     bool ReadAudioSampleDesc(std::pair<int64_t, int64_t> trak, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const;
