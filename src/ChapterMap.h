@@ -1,28 +1,28 @@
 ﻿#ifndef INCLUDE_CHAPTER_MAP_H
 #define INCLUDE_CHAPTER_MAP_H
 
+#include <functional>
+
 class CChapterMap
 {
     static const int RETRY_LIMIT = 3;
 public:
+    static const LPCTSTR DEFAULT_CHAPTER_IN;
+    static const LPCTSTR DEFAULT_CHAPTER_OUT;
+    static const LPCTSTR DEFAULT_CHAPTER_X_IN;
+    static const LPCTSTR DEFAULT_CHAPTER_X_OUT;
     static const int CHAPTER_POS_MAX = 99*3600000+59*60000+59*1000+999;
     struct CHAPTER {
         // 最終要素のみにNULを必ず格納する
         std::vector<TCHAR> name;
         CHAPTER(LPCTSTR name_ = TEXT("")) : name(name_, name_ + _tcslen(name_) + 1) {}
-        bool IsIn() const { return name[0] == TEXT('I') || name[0] == TEXT('i'); }
-        bool IsOut() const { return name[0] == TEXT('O') || name[0] == TEXT('o'); }
-        bool IsX() const { TCHAR c = name[IsIn() || IsOut() ? 1 : 0]; return c == TEXT('X') || c == TEXT('x'); }
-        void SetIn(bool f) { if (f && !IsIn()) name.insert(name.begin(), TEXT('i')); else if (!f && IsIn()) name.erase(name.begin()); }
-        void SetOut(bool f) { if (f && !IsOut()) name.insert(name.begin(), TEXT('o')); else if (!f && IsOut()) name.erase(name.begin()); }
-        void SetX(bool f) {
-            if (f && !IsX()) name.insert(name.begin() + (IsIn() || IsOut() ? 1 : 0), TEXT('x'));
-            else if (!f && IsX()) name.erase(name.begin() + (IsIn() || IsOut() ? 1 : 0));
-        }
+        bool IsMatchPattern(LPCTSTR pattern, std::pair<size_t, size_t> *pos = nullptr) const;
+        int MatchWildcardPattern(LPCTSTR pattern) const;
+        void SetPattern(LPCTSTR pattern, bool f);
     };
     CChapterMap();
     ~CChapterMap();
-    bool Open(LPCTSTR path, LPCTSTR subDirName);
+    bool Open(LPCTSTR path, LPCTSTR subDirName, const std::function<bool(std::map<int, CHAPTER> &)> &insertChapters);
     void Close();
     bool Sync();
     bool Insert(const std::pair<int, CHAPTER> &ch, int pos = -1);
@@ -31,12 +31,24 @@ public:
     const std::map<int, CHAPTER>& Get() const { return m_map; }
     bool IsOpen() const { return m_path[0] != 0; }
     bool NeedToSync() const { return m_hDir != INVALID_HANDLE_VALUE; }
+    const TCHAR (&GetChapterIn() const)[64] { return m_chapterIn; }
+    const TCHAR (&GetChapterOut() const)[64] { return m_chapterOut; }
+    const TCHAR (&GetChapterXIn() const)[64] { return m_chapterXIn; }
+    const TCHAR (&GetChapterXOut() const)[64] { return m_chapterXOut; }
+    TCHAR (&GetChapterIn())[64] { return m_chapterIn; }
+    TCHAR (&GetChapterOut())[64] { return m_chapterOut; }
+    TCHAR (&GetChapterXIn())[64] { return m_chapterXIn; }
+    TCHAR (&GetChapterXOut())[64] { return m_chapterXOut; }
 private:
     bool Save() const;
     bool InsertCommand(LPCTSTR p);
     bool InsertOgmStyleCommand(LPCTSTR p);
     std::map<int, CHAPTER> m_map;
     TCHAR m_path[MAX_PATH];
+    TCHAR m_chapterIn[64];
+    TCHAR m_chapterOut[64];
+    TCHAR m_chapterXIn[64];
+    TCHAR m_chapterXOut[64];
     HANDLE m_hDir, m_hEvent;
     bool m_fWritable;
     int m_retryCount;

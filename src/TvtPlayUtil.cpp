@@ -19,7 +19,8 @@ CSeekStatusItem::CSeekStatusItem(CStatusView *pStatus, ITvtPlayController *pPlug
 
 void CSeekStatusItem::Draw(HDC hdc, const RECT *pRect)
 {
-    const std::map<int, CChapterMap::CHAPTER> &chMap = m_pPlugin->GetChapter().Get();
+    const CChapterMap &chapter = m_pPlugin->GetChapter();
+    const std::map<int, CChapterMap::CHAPTER> &chMap = chapter.Get();
     int dur = m_pPlugin->GetDuration();
     int pos = m_pPlugin->GetApparentPosition();
     COLORREF crText = ::GetTextColor(hdc);
@@ -159,22 +160,22 @@ void CSeekStatusItem::Draw(HDC hdc, const RECT *pRect)
         for (; it != chMap.end(); ++it) {
             int chapX = rcBar.left + ConvUnit(it->first, rcBar.right - rcBar.left, dur);
             POINT apt[3] = { chapX, rcBar.top-3,
-                             it->second.IsOut() ? chapX : chapX-4, rcBar.top-7,
-                             it->second.IsIn() ? chapX : chapX+4, rcBar.top-7 };
+                             it->second.IsMatchPattern(chapter.GetChapterOut()) ? chapX : chapX-4, rcBar.top-7,
+                             it->second.IsMatchPattern(chapter.GetChapterIn()) ? chapX : chapX+4, rcBar.top-7 };
             HBRUSH hbrOld = it==itHover ? SelectBrush(hdc, ::GetStockObject(NULL_BRUSH)) : SelectBrush(hdc, hbr);
             ::Polygon(hdc, apt, 3);
             SelectBrush(hdc, hbrOld);
 
             // チャプター区間を描画
             if (isIn) {
-                if (it->second.IsOut() && (isX && it->second.IsX() || !isX && !it->second.IsX())) {
+                if (it->second.IsMatchPattern(chapter.GetChapterOut()) && isX == it->second.IsMatchPattern(chapter.GetChapterXOut())) {
                     ::LineTo(hdc, chapX, rcBar.top-7);
                     isIn = false;
                 }
             }
-            else if (it->second.IsIn()) {
+            else if (it->second.IsMatchPattern(chapter.GetChapterIn())) {
                 ::MoveToEx(hdc, chapX, rcBar.top-7, nullptr);
-                isX = it->second.IsX();
+                isX = it->second.IsMatchPattern(chapter.GetChapterXIn());
                 isIn = true;
             }
         }

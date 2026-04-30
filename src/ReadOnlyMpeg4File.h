@@ -28,11 +28,17 @@ class CReadOnlyMpeg4File : public IReadOnlyFile
     static const uint16_t PCR_PID = 0x01FF;
     static const uint16_t DISPLACED_PID = 0x1E00;
     static const uint32_t PSI_MAX_STREAMS = 32;
+    static const size_t CHAPTER_LIST_MAX = 10000;
+    static const size_t CHAPTER_NAMES_LEN_MAX = 1024 * 1024;
 public:
-    CReadOnlyMpeg4File() : m_fp(nullptr, fclose) {}
+    CReadOnlyMpeg4File() {}
     ~CReadOnlyMpeg4File() { Close(); }
     bool Open(LPCTSTR path, int flags, const char *&errorMessage);
     void Close();
+    const std::vector<std::pair<int, std::vector<WCHAR>>> *GetEmbeddedChapterList() const;
+    LPCTSTR GetChapterCutSec() const;
+    LPCTSTR GetChapterCutMsec() const;
+    void EditTot(const std::vector<std::pair<int, int>> &editList);
     int Read(BYTE *pBuf, int numToRead);
     __int64 SetPointer(__int64 distanceToMove, MOVE_METHOD moveMethod);
     __int64 GetSize() const;
@@ -59,18 +65,20 @@ private:
     }
     bool LoadSettings();
     void InitializeMetaInfo(LPCTSTR path);
+    bool InitializeMetaInfoUsingProgramText(LPCTSTR path);
     void LoadCaption(LPCTSTR path);
     void OpenPsiData(LPCTSTR path);
+    bool ValidateFileAttributes(LPCTSTR path, LPCTSTR attachedPath) const;
     bool InitializeTable(const char *&errorMessage);
-    bool ReadVideoSampleDesc(int64_t trakBoxPos, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const;
-    bool ReadAudioSampleDesc(int64_t trakBoxPos, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const;
-    bool ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
+    bool ReadVideoSampleDesc(std::pair<int64_t, int64_t> trak, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const;
+    bool ReadAudioSampleDesc(std::pair<int64_t, int64_t> trak, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const;
+    bool ReadSampleTable(std::pair<int64_t, int64_t> trak, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
                          std::vector<int64_t> &stts, std::vector<uint32_t> *ctts, int64_t &editTimeOffset, std::vector<uint8_t> &buf) const;
     bool InitializeBlockList(const char *&errorMessage);
     bool ReadCurrentBlock();
     bool InitializePsiCounterInfo(const char *&errorMessage);
-    std::pair<int64_t, int64_t> FindBoxPosition(const char *path, int64_t currentBoxPos) const;
-    int ReadBox(const char *path, std::vector<uint8_t> &data, int64_t currentBoxPos) const;
+    std::pair<int64_t, int64_t> FindBox(const char *path, std::pair<int64_t, int64_t> posAndSize) const;
+    int ReadBox(const char *path, std::vector<uint8_t> &data, std::pair<int64_t, int64_t> posAndSize) const;
     int ReadSample(size_t index, const std::vector<int64_t> &stso, const std::vector<uint32_t> &stsz, std::vector<uint8_t> *data) const;
     static void AddTsPacketsFromPsi(std::vector<uint8_t> &buf, const uint8_t *psi, size_t psiSize, uint8_t &counter, uint16_t pid);
     static bool Add16TsPacketsFromPsi(std::vector<uint8_t> &buf, const uint8_t *psi, size_t psiSize, uint16_t pid);
@@ -79,7 +87,7 @@ private:
     static size_t CreateNit(uint8_t *data, uint16_t nid);
     static size_t CreateSdt(uint8_t *data, uint16_t nid, uint16_t tsid, uint16_t sid);
     static size_t CreateEmptyEitPf(uint8_t *data, uint16_t nid, uint16_t tsid, uint16_t sid);
-    static size_t CreateTot(uint8_t *data, SYSTEMTIME st);
+    static size_t CreateTot(uint8_t *data, uint32_t t);
     static size_t CreatePmt(uint8_t *data, uint16_t sid, bool fHevc, bool fAudio2, bool fCaption);
     static bool AddPmtPacketsFromPmt(std::vector<uint8_t> &buf, const std::vector<uint8_t> &pmt, const std::map<uint16_t, PSI_COUNTER_INFO> &pidMap,
                                      bool fHevc, bool fAudio2, bool fCaption);
@@ -90,16 +98,18 @@ private:
     static size_t CreateAdtsHeader(uint8_t *data, int profile, int freq, int ch, int bufferSize);
     static size_t NalFileToByte(std::vector<uint8_t> &data, bool &fIdr, bool fHevc);
     static uint32_t CalcCrc32(const uint8_t *data, size_t len, uint32_t crc = 0xFFFFFFFF);
+    static uint32_t FileTimeToUnixTime(FILETIME ft) { return static_cast<uint32_t>(((static_cast<int64_t>(ft.dwHighDateTime) << 32 | ft.dwLowDateTime) - 116444736000000000) / 10000000); }
 
-    std::unique_ptr<FILE, decltype(&fclose)> m_fp;
+    std::unique_ptr<FILE, fclose_deleter> m_fp;
     TCHAR m_metaName[MAX_PATH];
     TCHAR m_vttExtension[16];
     TCHAR m_psiDataExtension[16];
+    TCHAR m_programTextExtension[16];
     bool m_fCheckFileAttributes;
     TCHAR m_iniBroadcastID[15];
     TCHAR m_iniTime[20];
     uint16_t m_nid, m_tsid, m_sid;
-    LARGE_INTEGER m_totStart;
+    uint32_t m_totStart;
     std::vector<std::pair<int64_t, std::vector<uint8_t>>> m_captionList;
     std::vector<int64_t> m_stsoV, m_stsoA[2];
     std::vector<uint32_t> m_stszV, m_stszA[2];
@@ -116,6 +126,12 @@ private:
     int64_t m_pointer;
     CPsiArchiveReader m_psiDataReader;
     std::map<uint16_t, PSI_COUNTER_INFO> m_psiCounterInfoMap;
+    bool m_fLoadChapterTrack;
+    bool m_fHasChapter;
+    std::vector<std::pair<int, std::vector<WCHAR>>> m_chapterList;
+    TCHAR m_chapterCutSec[64];
+    TCHAR m_chapterCutMsec[64];
+    std::vector<std::pair<int, int>> m_totEditList;
 };
 
 #endif // INCLUDE_READ_ONLY_MPEG4_FILE_H

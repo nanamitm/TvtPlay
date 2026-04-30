@@ -44,6 +44,10 @@ public:
     bool Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, bool fUnderrunCtrl, bool fUseQpc,
               int pcrDisconThresholdMsec, const char *&errorMessage);
     DWORD GetInitialPcr() { return m_initPcr; }
+    const std::vector<std::pair<int, std::vector<WCHAR>>> *GetEmbeddedChapterList() const;
+    LPCTSTR GetChapterCutSec() const;
+    LPCTSTR GetChapterCutMsec() const;
+    void EditTot(const std::vector<std::pair<int, int>> &editList);
     void SetupQpc();
     void SetUdpPort(unsigned short port);
     void SetPipeNumber(int n);

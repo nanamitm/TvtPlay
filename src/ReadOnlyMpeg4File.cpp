@@ -6,6 +6,9 @@
 #include "B24CaptionUtil.h"
 #include "ReadOnlyMpeg4File.h"
 
+#define my_fseek _fseeki64
+#define my_ftell _ftelli64
+
 extern HINSTANCE g_hinstDLL;
 
 bool CReadOnlyMpeg4File::Open(LPCTSTR path, int flags, const char *&errorMessage)
@@ -34,8 +37,41 @@ bool CReadOnlyMpeg4File::Open(LPCTSTR path, int flags, const char *&errorMessage
 
 void CReadOnlyMpeg4File::Close()
 {
+    m_totEditList.clear();
     m_psiDataReader.Close();
     m_fp.reset();
+}
+
+const std::vector<std::pair<int, std::vector<WCHAR>>> *CReadOnlyMpeg4File::GetEmbeddedChapterList() const
+{
+    return m_fp && m_fHasChapter ? &m_chapterList : nullptr;
+}
+
+LPCTSTR CReadOnlyMpeg4File::GetChapterCutSec() const
+{
+    return m_fp ? m_chapterCutSec : TEXT("");
+}
+
+LPCTSTR CReadOnlyMpeg4File::GetChapterCutMsec() const
+{
+    return m_fp ? m_chapterCutMsec : TEXT("");
+}
+
+void CReadOnlyMpeg4File::EditTot(const std::vector<std::pair<int, int>> &editList)
+{
+    m_totEditList.clear();
+    for (size_t i = 0; i < editList.size(); ++i) {
+        if (m_totEditList.empty()) {
+            m_totEditList.push_back(std::make_pair(0, 0));
+        }
+        int blockIndex = editList[i].first / 100;
+        if (blockIndex >= m_totEditList.back().first) {
+            if (blockIndex > m_totEditList.back().first) {
+                m_totEditList.push_back(std::make_pair(blockIndex, m_totEditList.back().second));
+            }
+            m_totEditList.back().second += max(editList[i].second, 0);
+        }
+    }
 }
 
 int CReadOnlyMpeg4File::Read(BYTE *pBuf, int numToRead)
@@ -47,7 +83,7 @@ int CReadOnlyMpeg4File::Read(BYTE *pBuf, int numToRead)
                 break;
             }
             int n = static_cast<int>(min(numToRead - numRead, static_cast<int64_t>(m_blockCache.size()) - m_pointer));
-            ::memcpy(pBuf + numRead, &m_blockCache[static_cast<size_t>(m_pointer)], n);
+            std::copy(m_blockCache.begin() + static_cast<size_t>(m_pointer), m_blockCache.begin() + static_cast<size_t>(m_pointer) + n, pBuf + numRead);
             numRead += n;
             m_pointer += n;
             if (m_pointer >= static_cast<int64_t>(m_blockCache.size())) {
@@ -121,74 +157,216 @@ bool CReadOnlyMpeg4File::LoadSettings()
     }
     // プラグイン設定の[MP4]セクション
     std::vector<TCHAR> buf = GetPrivateProfileSectionBuffer(TEXT("MP4"), iniPath);
+    bool fEnabled = GetBufferedProfileInt(buf.data(), TEXT("Enabled"), 1) != 0;
     GetBufferedProfileString(buf.data(), TEXT("Meta"), TEXT("metadata.ini"), m_metaName, _countof(m_metaName));
     GetBufferedProfileString(buf.data(), TEXT("VttExtension"), TEXT(".vtt"), m_vttExtension, _countof(m_vttExtension));
     GetBufferedProfileString(buf.data(), TEXT("PsiDataExtension"), TEXT(".psc"), m_psiDataExtension, _countof(m_psiDataExtension));
+    GetBufferedProfileString(buf.data(), TEXT("ProgramTextExtension"), TEXT(".program.txt"), m_programTextExtension, _countof(m_programTextExtension));
     m_fCheckFileAttributes = GetBufferedProfileInt(buf.data(), TEXT("CheckFileAttributes"), 1) != 0;
+    m_fLoadChapterTrack = GetBufferedProfileInt(buf.data(), TEXT("LoadChapterTrack"), 1) != 0;
+    GetBufferedProfileString(buf.data(), TEXT("ChapterCutSec"), TEXT("_cut=*s"), m_chapterCutSec, _countof(m_chapterCutSec));
+    GetBufferedProfileString(buf.data(), TEXT("ChapterCutMsec"), TEXT("_cut=*ms"), m_chapterCutMsec, _countof(m_chapterCutMsec));
     GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), TEXT("0x000100020003"), m_iniBroadcastID, _countof(m_iniBroadcastID));
     GetBufferedProfileString(buf.data(), TEXT("Time"), TEXT(""), m_iniTime, _countof(m_iniTime));
-    if (!buf[0]) {
-        WritePrivateProfileInt(TEXT("MP4"), TEXT("Enabled"), 1, iniPath);
+    if (GetBufferedProfileInt(buf.data(), TEXT("Version"), 0) < 1) {
+        WritePrivateProfileInt(TEXT("MP4"), TEXT("Version"), 1, iniPath);
+        WritePrivateProfileInt(TEXT("MP4"), TEXT("Enabled"), fEnabled, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("Meta"), m_metaName, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("VttExtension"), m_vttExtension, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("PsiDataExtension"), m_psiDataExtension, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ProgramTextExtension"), m_programTextExtension, iniPath);
         WritePrivateProfileInt(TEXT("MP4"), TEXT("CheckFileAttributes"), m_fCheckFileAttributes, iniPath);
+        WritePrivateProfileInt(TEXT("MP4"), TEXT("LoadChapterTrack"), m_fLoadChapterTrack, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutSec"), m_chapterCutSec, iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("ChapterCutMsec"), m_chapterCutMsec, iniPath);
         ::WritePrivateProfileString(TEXT("MP4"), TEXT("BroadcastID"), m_iniBroadcastID, iniPath);
-        ::WritePrivateProfileString(TEXT("MP4"), TEXT("Time"), TEXT(""), iniPath);
+        ::WritePrivateProfileString(TEXT("MP4"), TEXT("Time"), m_iniTime, iniPath);
     }
-    return GetBufferedProfileInt(buf.data(), TEXT("Enabled"), 1) != 0;
+    return fEnabled;
 }
 
 void CReadOnlyMpeg4File::InitializeMetaInfo(LPCTSTR path)
 {
+    // PSI/SI反映時は省略
+    if (m_psiDataReader.IsOpen()) {
+        return;
+    }
+    TCHAR szSpecBroadcastID[15] = {};
+    TCHAR szSpecTime[20] = {};
     if (m_metaName[0] && _tcslen(path) < MAX_PATH) {
         TCHAR metaPath[MAX_PATH];
         _tcscpy_s(metaPath, path);
-        if (::PathRemoveFileSpec(metaPath) && ::PathAppend(metaPath, m_metaName)) {
-            // "Meta"設定の[*]セクションで上書き
+        if (::PathRemoveFileSpec(metaPath) && ::PathAppend(metaPath, m_metaName) && ValidateFileAttributes(path, metaPath)) {
+            // "Meta"設定の[*]セクション
             std::vector<TCHAR> buf = GetPrivateProfileSectionBuffer(TEXT("*"), metaPath);
             TCHAR szBroadcastID[15];
-            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), m_iniBroadcastID, szBroadcastID, _countof(szBroadcastID));
+            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), TEXT(""), szBroadcastID, _countof(szBroadcastID));
             TCHAR szTime[20];
-            GetBufferedProfileString(buf.data(), TEXT("Time"), m_iniTime, szTime, _countof(szTime));
+            GetBufferedProfileString(buf.data(), TEXT("Time"), TEXT(""), szTime, _countof(szTime));
             // "Meta"設定の[ファイル名]セクションで上書き
             buf = GetPrivateProfileSectionBuffer(::PathFindFileName(path), metaPath);
-            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), szBroadcastID, m_iniBroadcastID, _countof(m_iniBroadcastID));
-            GetBufferedProfileString(buf.data(), TEXT("Time"), szTime, m_iniTime, _countof(m_iniTime));
+            GetBufferedProfileString(buf.data(), TEXT("BroadcastID"), szBroadcastID, szSpecBroadcastID, _countof(szSpecBroadcastID));
+            GetBufferedProfileString(buf.data(), TEXT("Time"), szTime, szSpecTime, _countof(szSpecTime));
         }
     }
-    LARGE_INTEGER broadcastID = {};
-    ::StrToInt64Ex(m_iniBroadcastID, STIF_SUPPORT_HEX, &broadcastID.QuadPart);
-    m_nid = max(LOWORD(broadcastID.HighPart), 1);
-    m_tsid = max(HIWORD(broadcastID.LowPart), 1);
-    m_sid = max(LOWORD(broadcastID.LowPart), 1);
-    m_totStart.QuadPart = 125911908000000000LL; // 2000-01-01T09:00:00
-    if (!m_iniTime[0]) {
-        // ファイルの更新日時をTOTとする
-        FILETIME ft;
-        if (::GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(m_fp.get()))), nullptr, nullptr, &ft)) {
-            m_totStart.LowPart = ft.dwLowDateTime;
-            m_totStart.HighPart = ft.dwHighDateTime;
-            m_totStart.QuadPart += 9 * 36000000000LL;
+    // "Meta"設定は番組情報ファイルよりも優先
+    bool fInitialized = (!szSpecBroadcastID[0] || !szSpecTime[0]) && InitializeMetaInfoUsingProgramText(path);
+    if (szSpecBroadcastID[0] || !fInitialized) {
+        LARGE_INTEGER broadcastID = {};
+        ::StrToInt64Ex(szSpecBroadcastID[0] ? szSpecBroadcastID : m_iniBroadcastID, STIF_SUPPORT_HEX, &broadcastID.QuadPart);
+        m_nid = max(LOWORD(broadcastID.HighPart), 1);
+        m_tsid = max(HIWORD(broadcastID.LowPart), 1);
+        m_sid = max(LOWORD(broadcastID.LowPart), 1);
+    }
+    if (szSpecTime[0] || !fInitialized) {
+        m_totStart = 946717200; // 2000-01-01T09:00:00
+        if (!szSpecTime[0]) {
+            _tcscpy_s(szSpecTime, m_iniTime);
+        }
+        if (!szSpecTime[0]) {
+            // ファイルの更新日時をTOTとする
+            FILETIME ft;
+            if (::GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(m_fp.get()))), nullptr, nullptr, &ft)) {
+                m_totStart = FileTimeToUnixTime(ft) + 9 * 3600;
+            }
+        }
+        else if (_tcslen(szSpecTime) == 19 &&
+                 szSpecTime[4] == TEXT('-') && szSpecTime[7] == TEXT('-') &&
+                 szSpecTime[10] == TEXT('T') && szSpecTime[13] == TEXT(':') && szSpecTime[16] == TEXT(':'))
+        {
+            SYSTEMTIME st = {};
+            st.wYear = static_cast<WORD>(_tcstol(&szSpecTime[0], nullptr, 10));
+            st.wMonth = static_cast<WORD>(_tcstol(&szSpecTime[5], nullptr, 10));
+            st.wDay = static_cast<WORD>(_tcstol(&szSpecTime[8], nullptr, 10));
+            st.wHour = static_cast<WORD>(_tcstol(&szSpecTime[11], nullptr, 10));
+            st.wMinute = static_cast<WORD>(_tcstol(&szSpecTime[14], nullptr, 10));
+            st.wSecond = static_cast<WORD>(_tcstol(&szSpecTime[17], nullptr, 10));
+            FILETIME ft;
+            if (::SystemTimeToFileTime(&st, &ft)) {
+                m_totStart = FileTimeToUnixTime(ft);
+            }
         }
     }
-    else if (_tcslen(m_iniTime) == 19 &&
-             m_iniTime[4] == TEXT('-') && m_iniTime[7] == TEXT('-') &&
-             m_iniTime[10] == TEXT('T') && m_iniTime[13] == TEXT(':') && m_iniTime[16] == TEXT(':'))
-    {
-        SYSTEMTIME st = {};
-        st.wYear = static_cast<WORD>(_tcstol(&m_iniTime[0], nullptr, 10));
-        st.wMonth = static_cast<WORD>(_tcstol(&m_iniTime[5], nullptr, 10));
-        st.wDay = static_cast<WORD>(_tcstol(&m_iniTime[8], nullptr, 10));
-        st.wHour = static_cast<WORD>(_tcstol(&m_iniTime[11], nullptr, 10));
-        st.wMinute = static_cast<WORD>(_tcstol(&m_iniTime[14], nullptr, 10));
-        st.wSecond = static_cast<WORD>(_tcstol(&m_iniTime[17], nullptr, 10));
-        FILETIME ft;
-        if (::SystemTimeToFileTime(&st, &ft)) {
-            m_totStart.LowPart = ft.dwLowDateTime;
-            m_totStart.HighPart = ft.dwHighDateTime;
+}
+
+bool CReadOnlyMpeg4File::InitializeMetaInfoUsingProgramText(LPCTSTR path)
+{
+    TCHAR programTextPath[MAX_PATH];
+    if (!m_programTextExtension[0] || _tcslen(path) >= _countof(programTextPath)) {
+        return false;
+    }
+    _tcscpy_s(programTextPath, path);
+    if (!::PathRenameExtension(programTextPath, m_programTextExtension) || !ValidateFileAttributes(path, programTextPath)) {
+        return false;
+    }
+    FILE *fp;
+    if (_tfopen_s(&fp, programTextPath, TEXT("rN")) != 0) {
+        return false;
+    }
+
+    enum { PG_START, PG_SERVICE_NAME, PG_EVENT_NAME, PG_INFO, PG_EXT_INFO, PG_EXT_INFO2, PG_INFO_END, PG_EXTRA, PG_EXTRA2, PG_TSID, PG_SID, PG_ERR, PG_END } state = PG_START;
+    bool fLongLine = false;
+    char buf[64];
+    size_t readFileCount = 0;
+    while (state != PG_ERR && state != PG_END && readFileCount < READ_FILE_MAX_SIZE && fgets(buf, _countof(buf), fp)) {
+        size_t bufLen = strlen(buf);
+        readFileCount += bufLen;
+        // 各行、前のほうだけ分かればよい
+        if (bufLen == 0 || buf[bufLen - 1] != '\n') {
+            if (bufLen == 0 || fLongLine) continue;
+            fLongLine = true;
+        }
+        else if (fLongLine) {
+            fLongLine = false;
+            continue;
+        }
+        else {
+            buf[--bufLen] = '\0';
+        }
+        if (state == PG_START && !strncmp(buf, "\xEF\xBB\xBF", 3)) {
+            // BOMを除去
+            std::copy(buf + 3, buf + bufLen + 1, buf);
+            bufLen -= 3;
+        }
+        bool fEmptyLine = bufLen == 0;
+        switch (state) {
+        case PG_START:
+            {
+                state = PG_ERR;
+                if (bufLen < 10 || buf[4] != TEXT('/') || buf[7] != TEXT('/')) break;
+                size_t i = 10 + strcspn(buf + 10, ")");
+                if (buf[i] != ')') break;
+                if (buf[++i] == ' ') ++i;
+                if (bufLen < i + 5 || buf[i + 2] != ':') break;
+                SYSTEMTIME st = {};
+                st.wYear = static_cast<WORD>(strtol(buf, nullptr, 10));
+                st.wMonth = static_cast<WORD>(strtol(buf + 5, nullptr, 10));
+                st.wDay = static_cast<WORD>(strtol(buf + 8, nullptr, 10));
+                st.wHour = static_cast<WORD>(strtol(buf + i, nullptr, 10));
+                st.wMinute = static_cast<WORD>(strtol(buf + i + 3, nullptr, 10));
+                if (bufLen >= i + 8 && buf[i + 5] == ':') {
+                    st.wSecond = static_cast<WORD>(strtol(buf + i + 6, nullptr, 10));
+                }
+                FILETIME ft;
+                if (!::SystemTimeToFileTime(&st, &ft)) break;
+                m_totStart = FileTimeToUnixTime(ft);
+                state = PG_SERVICE_NAME;
+            }
+            break;
+        case PG_SERVICE_NAME:
+            state = PG_EVENT_NAME;
+            break;
+        case PG_EVENT_NAME:
+            if (fEmptyLine) state = PG_INFO;
+            break;
+        case PG_INFO:
+            if (fEmptyLine) state = PG_INFO_END;
+            break;
+        case PG_EXT_INFO:
+            if (fEmptyLine) state = PG_EXT_INFO2;
+            break;
+        case PG_EXT_INFO2:
+            state = fEmptyLine ? PG_EXTRA : PG_EXT_INFO;
+            break;
+        case PG_INFO_END:
+            // 「詳細情報」(UTF-8またはShift_JIS)という文字列があればそこから空行2行まで詳細情報
+            if (!strcmp(buf, "\xE8\xA9\xB3\xE7\xB4\xB0\xE6\x83\x85\xE5\xA0\xB1") || !strcmp(buf, "\x8F\xDA\x8D\xD7\x8F\xEE\x95\xF1")) {
+                state = PG_EXT_INFO;
+                break;
+            }
+            state = PG_EXTRA;
+            // FALL THROUGH!
+        case PG_EXTRA:
+            if (strncmp(buf, "OriginalNetworkID:", 18)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_nid = max(static_cast<WORD>(strtol(buf + 18, nullptr, 10)), 1);
+            state = PG_TSID;
+            break;
+        case PG_EXTRA2:
+            if (fEmptyLine) state = PG_EXTRA;
+            break;
+        case PG_TSID:
+            if (strncmp(buf, "TransportStreamID:", 18)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_tsid = max(static_cast<WORD>(strtol(buf + 18, nullptr, 10)), 1);
+            state = PG_SID;
+            break;
+        case PG_SID:
+            if (strncmp(buf, "ServiceID:", 10)) {
+                state = fEmptyLine ? PG_EXTRA : PG_EXTRA2;
+                break;
+            }
+            m_sid = max(static_cast<WORD>(strtol(buf + 10, nullptr, 10)), 1);
+            state = PG_END;
+            break;
         }
     }
+    fclose(fp);
+    return state == PG_END;
 }
 
 void CReadOnlyMpeg4File::LoadCaption(LPCTSTR path)
@@ -200,18 +378,8 @@ void CReadOnlyMpeg4File::LoadCaption(LPCTSTR path)
         return;
     }
     _tcscpy_s(vttPath, path);
-    if (!::PathRenameExtension(vttPath, m_vttExtension)) {
+    if (!::PathRenameExtension(vttPath, m_vttExtension) || !ValidateFileAttributes(path, vttPath)) {
         return;
-    }
-    if (m_fCheckFileAttributes) {
-        // 従ファイルにある隠し属性が主ファイルにも必要
-        DWORD hiddenAttr = ::GetFileAttributes(vttPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
-        if (hiddenAttr) {
-            DWORD attr = ::GetFileAttributes(path);
-            if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
-                return;
-            }
-        }
     }
     LoadWebVttB24Caption(vttPath, m_captionList);
 }
@@ -223,20 +391,25 @@ void CReadOnlyMpeg4File::OpenPsiData(LPCTSTR path)
         return;
     }
     _tcscpy_s(psiDataPath, path);
-    if (!::PathRenameExtension(psiDataPath, m_psiDataExtension)) {
+    if (!::PathRenameExtension(psiDataPath, m_psiDataExtension) || !ValidateFileAttributes(path, psiDataPath)) {
         return;
     }
+    m_psiDataReader.Open(psiDataPath);
+}
+
+bool CReadOnlyMpeg4File::ValidateFileAttributes(LPCTSTR path, LPCTSTR attachedPath) const
+{
     if (m_fCheckFileAttributes) {
         // 従ファイルにある隠し属性が主ファイルにも必要
-        DWORD hiddenAttr = ::GetFileAttributes(psiDataPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        DWORD hiddenAttr = ::GetFileAttributes(attachedPath) & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
         if (hiddenAttr) {
             DWORD attr = ::GetFileAttributes(path);
             if (attr == INVALID_FILE_ATTRIBUTES || (hiddenAttr & ~attr)) {
-                return;
+                return false;
             }
         }
     }
-    m_psiDataReader.Open(psiDataPath);
+    return true;
 }
 
 bool CReadOnlyMpeg4File::InitializeTable(const char *&errorMessage)
@@ -245,45 +418,63 @@ bool CReadOnlyMpeg4File::InitializeTable(const char *&errorMessage)
     m_stsoV.clear();
     m_stsoA[0].clear();
     m_stsoA[1].clear();
-    for (char path[] = "moov0/trak0"; path[10] <= '9'; ++path[10]) {
-        int64_t trakBoxPos = FindBoxPosition(path, 0).first;
-        if (trakBoxPos < 0) {
+    std::pair<int64_t, int64_t> moov = FindBox("moov", std::pair<int64_t, int64_t>(0, INT64_MAX));
+    if (moov.first < 0) {
+        errorMessage = "CReadOnlyMpeg4File: No moov box";
+        return false;
+    }
+    std::pair<int64_t, int64_t> trak(moov.first, 0);
+    uint32_t chapTrackIDs[3] = {};
+    for (int i = 0; i < 100; ++i) {
+        trak.first += trak.second;
+        trak.second = moov.first + moov.second - trak.first;
+        trak = FindBox("trak", trak);
+        if (trak.first < 0) {
             break;
         }
         uint32_t timeScale = 0;
-        if (ReadBox("mdia0/mdhd0", buf, trakBoxPos) >= 24) {
+        if (ReadBox("mdia/mdhd", buf, trak) >= 24) {
             if ((ArrayToDWORD(&buf[0]) & 0xFEFFFFFF) == 0) {
                 timeScale = ArrayToDWORD(&buf[buf[0] ? 20 : 12]);
             }
         }
         if (timeScale != 0) {
             int64_t editTimeOffset;
-            if (m_stsoV.empty() && ReadVideoSampleDesc(trakBoxPos, m_fHevc, m_spsPps, buf)) {
+            if (m_stsoV.empty() && ReadVideoSampleDesc(trak, m_fHevc, m_spsPps, buf)) {
                 m_timeScaleV = timeScale;
-                if (ReadSampleTable(trakBoxPos, m_stsoV, m_stszV, m_sttsV, &m_cttsV, editTimeOffset, buf) &&
+                if (ReadSampleTable(trak, m_stsoV, m_stszV, m_sttsV, &m_cttsV, editTimeOffset, buf) &&
                     std::find_if(m_stszV.begin(), m_stszV.end(), [](uint32_t a) { return a > VIDEO_SAMPLE_MAX; }) == m_stszV.end()) {
                     // 0.5秒の範囲でPTSを利用してエディットリストの内容を反映する
                     m_offsetPtsV = static_cast<uint32_t>(22500 + min(max(editTimeOffset * 45000 / m_timeScaleV, 0), 22500));
+                    if (m_fLoadChapterTrack && ReadBox("tref/chap", buf, trak) >= 4) {
+                        chapTrackIDs[0] = ArrayToDWORD(&buf[0]);
+                    }
                 }
                 else {
                     m_stsoV.clear();
                 }
             }
-            else if (m_stsoA[0].empty() && ReadAudioSampleDesc(trakBoxPos, m_adtsHeader[0], buf)) {
+            else if (m_stsoA[0].empty() && ReadAudioSampleDesc(trak, m_adtsHeader[0], buf)) {
                 m_timeScaleA[0] = timeScale;
-                if (ReadSampleTable(trakBoxPos, m_stsoA[0], m_stszA[0], m_sttsA[0], nullptr, editTimeOffset, buf) &&
+                if (ReadSampleTable(trak, m_stsoA[0], m_stszA[0], m_sttsA[0], nullptr, editTimeOffset, buf) &&
                     std::find_if(m_stszA[0].begin(), m_stszA[0].end(), [](uint32_t a) { return a > AUDIO_SAMPLE_MAX; }) == m_stszA[0].end()) {
                     m_offsetPtsA[0] = static_cast<uint32_t>(22500 + min(max(editTimeOffset * 45000 / m_timeScaleA[0], 0), 22500));
+                    if (m_fLoadChapterTrack && ReadBox("tref/chap", buf, trak) >= 4) {
+                        chapTrackIDs[1] = ArrayToDWORD(&buf[0]);
+                    }
                 }
                 else {
                     m_stsoA[0].clear();
                 }
             }
-            else if (m_stsoA[1].empty() && !m_stsoA[0].empty() && ReadAudioSampleDesc(trakBoxPos, m_adtsHeader[1], buf)) {
+            else if (m_stsoA[1].empty() && !m_stsoA[0].empty() && ReadAudioSampleDesc(trak, m_adtsHeader[1], buf)) {
                 m_timeScaleA[1] = timeScale;
-                if (ReadSampleTable(trakBoxPos, m_stsoA[1], m_stszA[1], m_sttsA[1], nullptr, editTimeOffset, buf) &&
+                if (ReadSampleTable(trak, m_stsoA[1], m_stszA[1], m_sttsA[1], nullptr, editTimeOffset, buf) &&
                     std::find_if(m_stszA[1].begin(), m_stszA[1].end(), [](uint32_t a) { return a > AUDIO_SAMPLE_MAX; }) == m_stszA[1].end()) {
                     m_offsetPtsA[1] = static_cast<uint32_t>(22500 + min(max(editTimeOffset * 45000 / m_timeScaleA[1], 0), 22500));
+                    if (m_fLoadChapterTrack && ReadBox("tref/chap", buf, trak) >= 4) {
+                        chapTrackIDs[2] = ArrayToDWORD(&buf[0]);
+                    }
                 }
                 else {
                     m_stsoA[1].clear();
@@ -300,14 +491,74 @@ bool CReadOnlyMpeg4File::InitializeTable(const char *&errorMessage)
         errorMessage = "CReadOnlyMpeg4File: No audio track";
         return false;
     }
+
+    m_fHasChapter = false;
+    if (chapTrackIDs[0] || chapTrackIDs[1] || chapTrackIDs[2]) {
+        trak.first = moov.first;
+        trak.second = 0;
+        for (int i = 0; i < 100; ++i) {
+            trak.first += trak.second;
+            trak.second = moov.first + moov.second - trak.first;
+            trak = FindBox("trak", trak);
+            if (trak.first < 0) {
+                break;
+            }
+            uint32_t timeScale = 0;
+            if (ReadBox("mdia/mdhd", buf, trak) >= 24) {
+                if ((ArrayToDWORD(&buf[0]) & 0xFEFFFFFF) == 0) {
+                    timeScale = ArrayToDWORD(&buf[buf[0] ? 20 : 12]);
+                }
+            }
+            uint32_t trackID;
+            if (timeScale != 0 &&
+                ReadBox("mdia/hdlr", buf, trak) >= 12 && ArrayToDWORD(&buf[0]) == 0 && ArrayToDWORD(&buf[8]) == 0x74657874 && // "text" handler
+                ReadBox("tkhd", buf, trak) >= 24 && buf[0] <= 1 &&
+                (trackID = ArrayToDWORD(&buf[buf[0] ? 20 : 12])) != 0 &&
+                (trackID == chapTrackIDs[0] || trackID == chapTrackIDs[1] || trackID == chapTrackIDs[2]))
+            {
+                m_fHasChapter = true;
+                m_chapterList.clear();
+                int64_t editTimeOffset;
+                std::vector<int64_t> stso;
+                std::vector<uint32_t> stsz;
+                std::vector<int64_t> stts;
+                if (ReadSampleTable(trak, stso, stsz, stts, nullptr, editTimeOffset, buf)) {
+                    size_t nsum = 0;
+                    std::vector<uint8_t> roundTrip;
+                    for (size_t j = 0; j < min(stso.size(), CHAPTER_LIST_MAX) && nsum < CHAPTER_NAMES_LEN_MAX; ++j) {
+                        uint8_t n[2];
+                        if (my_fseek(m_fp.get(), stso[j], SEEK_SET) == 0 && fread(n, 1, 2, m_fp.get()) == 2) {
+                            buf.resize(n[0] << 8 | n[1]);
+                            if (2 + buf.size() <= stsz[j] && fread(buf.data(), 1, buf.size(), m_fp.get()) == buf.size()) {
+                                m_chapterList.resize(m_chapterList.size() + 1);
+                                std::pair<int, std::vector<WCHAR>> &ch = m_chapterList.back();
+                                ch.first = static_cast<int>(min(max(((stts[0] < 0 ? static_cast<int64_t>(j) * stts[1] : stts[j]) + editTimeOffset) * 1000 / timeScale, 0), INT_MAX));
+                                // UTF-8のみ対応
+                                ch.second.assign(buf.size() + 1, L'\0');
+                                ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<LPCSTR>(buf.data()), static_cast<int>(buf.size()), ch.second.data(), static_cast<int>(buf.size()));
+                                ch.second.resize(wcslen(ch.second.data()) + 1);
+                                roundTrip.assign(buf.size(), 0);
+                                ::WideCharToMultiByte(CP_UTF8, 0, ch.second.data(), static_cast<int>(ch.second.size() - 1), reinterpret_cast<LPSTR>(roundTrip.data()), static_cast<int>(buf.size()), nullptr, nullptr);
+                                if (buf != roundTrip) {
+                                    ch.second.assign(1, L'\0');
+                                }
+                                nsum += ch.second.size();
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
     return InitializeBlockList(errorMessage);
 }
 
-bool CReadOnlyMpeg4File::ReadVideoSampleDesc(int64_t trakBoxPos, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const
+bool CReadOnlyMpeg4File::ReadVideoSampleDesc(std::pair<int64_t, int64_t> trak, bool &fHevc, std::vector<uint8_t> &spsPps, std::vector<uint8_t> &buf) const
 {
     const uint32_t DATA_FORMAT_AVC1 = 0x61766331;
     const uint32_t DATA_FORMAT_HVC1 = 0x68766331;
-    if (ReadBox("mdia0/minf0/stbl0/stsd0", buf, trakBoxPos) >= 16) {
+    if (ReadBox("mdia/minf/stbl/stsd", buf, trak) >= 16) {
         size_t boxLen = ArrayToDWORD(&buf[8]);
         uint32_t dataFormat = ArrayToDWORD(&buf[12]);
         // TODO: "hev1"は未対応
@@ -394,9 +645,9 @@ bool CReadOnlyMpeg4File::ReadVideoSampleDesc(int64_t trakBoxPos, bool &fHevc, st
     return false;
 }
 
-bool CReadOnlyMpeg4File::ReadAudioSampleDesc(int64_t trakBoxPos, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const
+bool CReadOnlyMpeg4File::ReadAudioSampleDesc(std::pair<int64_t, int64_t> trak, uint8_t *adtsHeader, std::vector<uint8_t> &buf) const
 {
-    if (ReadBox("mdia0/minf0/stbl0/stsd0", buf, trakBoxPos) >= 16) {
+    if (ReadBox("mdia/minf/stbl/stsd", buf, trak) >= 16) {
         size_t boxLen = ArrayToDWORD(&buf[8]);
         if (ArrayToDWORD(&buf[0]) == 0 &&
             ArrayToDWORD(&buf[4]) == 1 &&
@@ -449,16 +700,16 @@ bool CReadOnlyMpeg4File::ReadAudioSampleDesc(int64_t trakBoxPos, uint8_t *adtsHe
     return false;
 }
 
-bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
+bool CReadOnlyMpeg4File::ReadSampleTable(std::pair<int64_t, int64_t> trak, std::vector<int64_t> &stso, std::vector<uint32_t> &stsz,
                                          std::vector<int64_t> &stts, std::vector<uint32_t> *ctts, int64_t &editTimeOffset, std::vector<uint8_t> &buf) const
 {
-    int64_t stblBoxPos = FindBoxPosition("mdia0/minf0/stbl0", trakBoxPos).first;
-    if (stblBoxPos < 0) {
+    std::pair<int64_t, int64_t> stbl = FindBox("mdia/minf/stbl", trak);
+    if (stbl.first < 0) {
         return false;
     }
 
     std::vector<int64_t> stco;
-    if (ReadBox("co640", buf, stblBoxPos) >= 0) {
+    if (ReadBox("co64", buf, stbl) >= 0) {
         if (buf.size() >= 8) {
             size_t n = ArrayToDWORD(&buf[4]);
             if (ArrayToDWORD(&buf[0]) == 0 && n == (buf.size() - 8) / 8) {
@@ -469,7 +720,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
             }
         }
     }
-    else if (ReadBox("stco0", buf, stblBoxPos) >= 8) {
+    else if (ReadBox("stco", buf, stbl) >= 8) {
         size_t n = ArrayToDWORD(&buf[4]);
         if (ArrayToDWORD(&buf[0]) == 0 && n == (buf.size() - 8) / 4) {
             stco.reserve(n);
@@ -479,9 +730,14 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
         }
     }
     stsz.clear();
-    if (ReadBox("stsz0", buf, stblBoxPos) >= 12) {
+    if (ReadBox("stsz", buf, stbl) >= 12 && ArrayToDWORD(&buf[0]) == 0) {
+        uint32_t sampleSize = ArrayToDWORD(&buf[4]);
         size_t n = ArrayToDWORD(&buf[8]);
-        if (ArrayToDWORD(&buf[0]) == 0 && ArrayToDWORD(&buf[4]) == 0 && n == (buf.size() - 12) / 4) {
+        if (sampleSize > 0 && n <= (READ_BOX_SIZE_MAX - 12) / 4) {
+            // 固定サイズ
+            stsz.resize(n, sampleSize);
+        }
+        else if (sampleSize == 0 && n == (buf.size() - 12) / 4) {
             stsz.reserve(n);
             for (size_t i = 0; i < n; ++i) {
                 stsz.push_back(ArrayToDWORD(&buf[12 + 4 * i]));
@@ -495,7 +751,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
     // 各サンプルのファイル位置を計算
     stso.clear();
     stso.reserve(stsz.size());
-    if (ReadBox("stsc0", buf, stblBoxPos) < 8) {
+    if (ReadBox("stsc", buf, stbl) < 8) {
         return false;
     }
     size_t stscNum = ArrayToDWORD(&buf[4]);
@@ -517,7 +773,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
         }
     }
     int64_t fileSize;
-    if (stso.size() != stsz.size() || _fseeki64(m_fp.get(), 0, SEEK_END) != 0 || (fileSize = _ftelli64(m_fp.get())) < 0) {
+    if (stso.size() != stsz.size() || my_fseek(m_fp.get(), 0, SEEK_END) != 0 || (fileSize = my_ftell(m_fp.get())) < 0) {
         return false;
     }
     // サンプルの総和や範囲がファイルサイズを超えていないかチェック
@@ -531,7 +787,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
 
     stts.clear();
     stts.reserve(stsz.size());
-    if (ReadBox("stts0", buf, stblBoxPos) >= 8) {
+    if (ReadBox("stts", buf, stbl) >= 8) {
         size_t n = ArrayToDWORD(&buf[4]);
         if (ArrayToDWORD(&buf[0]) == 0 && n == (buf.size() - 8) / 8) {
             if (n == 1 || (n == 2 && ArrayToDWORD(&buf[16]) == 1)) {
@@ -557,7 +813,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
     if (ctts) {
         ctts->clear();
         ctts->reserve(stsz.size());
-        if (ReadBox("ctts0", buf, stblBoxPos) < 0) {
+        if (ReadBox("ctts", buf, stbl) < 0) {
             // out-of-orderなし
             ctts->resize(stsz.size(), 0);
         }
@@ -581,7 +837,7 @@ bool CReadOnlyMpeg4File::ReadSampleTable(int64_t trakBoxPos, std::vector<int64_t
     }
 
     editTimeOffset = 0;
-    if (ReadBox("edts0/elst0", buf, trakBoxPos) >= 8) {
+    if (ReadBox("edts/elst", buf, trak) >= 8) {
         uint32_t verFlags = ArrayToDWORD(&buf[0]);
         size_t n = ArrayToDWORD(&buf[4]);
         if ((verFlags & 0xFEFFFFFF) == 0 && n == 1 && (verFlags ? 28U : 20U) == buf.size()) {
@@ -811,14 +1067,8 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
             packet = &m_blockCache.back() - 187;
             CreateHeader(packet, 1, 1, (blockIndex / 20) & 0x0F, 0x0014);
             packet[4] = 0;
-            LARGE_INTEGER li;
-            li.QuadPart = m_totStart.QuadPart + 1000000LL * blockIndex;
-            FILETIME ft;
-            ft.dwLowDateTime = li.LowPart;
-            ft.dwHighDateTime = li.HighPart;
-            SYSTEMTIME st;
-            FileTimeToSystemTime(&ft, &st);
-            CreateTot(packet + 5, st);
+            auto it = std::upper_bound(m_totEditList.begin(), m_totEditList.end(), std::make_pair(static_cast<int>(blockIndex), INT_MAX));
+            CreateTot(packet + 5, m_totStart + static_cast<uint32_t>(blockIndex / 10) + (it == m_totEditList.begin() ? 0 : (--it)->second) / 1000);
         }
     }
 
@@ -878,7 +1128,7 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
                 }
                 pos += packet[4] + 1;
             }
-            ::memcpy(packet + pos, &sample[i], 188 - pos);
+            std::copy(sample.begin() + i, sample.begin() + i + (188 - pos), packet + pos);
             i += 188 - pos;
         }
     }
@@ -893,7 +1143,7 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
             if (n > 0) {
                 sample.insert(sample.begin(), 14 + 7, 0xFF);
                 // ADTS header
-                ::memcpy(&sample[14], m_adtsHeader[a], 7);
+                std::copy(m_adtsHeader[a], m_adtsHeader[a] + 7, sample.begin() + 14);
                 n += 7;
                 sample[17] |= n >> 11 & 0x03;
                 sample[18] |= n >> 3 & 0xFF;
@@ -914,7 +1164,7 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
                     }
                     pos += packet[4] + 1;
                 }
-                ::memcpy(packet + pos, &sample[i], 188 - pos);
+                std::copy(sample.begin() + i, sample.begin() + i + (188 - pos), packet + pos);
                 i += 188 - pos;
             }
         }
@@ -947,7 +1197,7 @@ bool CReadOnlyMpeg4File::ReadCurrentBlock()
                 }
                 pos += packet[4] + 1;
             }
-            ::memcpy(packet + pos, &sample[i], 188 - pos);
+            std::copy(sample.begin() + i, sample.begin() + i + (188 - pos), packet + pos);
             i += 188 - pos;
         }
     }
@@ -1013,44 +1263,48 @@ bool CReadOnlyMpeg4File::InitializePsiCounterInfo(const char *&errorMessage)
     }, errorMessage) && !blockSizeMaxExceeded;
 }
 
-std::pair<int64_t, int64_t> CReadOnlyMpeg4File::FindBoxPosition(const char *path, int64_t currentBoxPos) const
+std::pair<int64_t, int64_t> CReadOnlyMpeg4File::FindBox(const char *path, std::pair<int64_t, int64_t> posAndSize) const
 {
-    if ((currentBoxPos >= 0 && _fseeki64(m_fp.get(), currentBoxPos, SEEK_SET) != 0) ||
-        !path[0] || !path[1] || !path[2] || !path[3] || path[4] < '0') {
+    if (!path[0] || !path[1] || !path[2] || !path[3] || posAndSize.second < 8 ||
+        (posAndSize.first >= 0 && my_fseek(m_fp.get(), posAndSize.first, SEEK_SET) != 0)) {
         return std::pair<int64_t, int64_t>(-1, 0);
     }
-    int index = path[4] - '0';
+    if (posAndSize.first < 0) {
+        posAndSize.first = -posAndSize.first;
+    }
     uint8_t head[16];
     while (fread(head, 1, 8, m_fp.get()) == 8) {
         int numRead = 8;
         int64_t boxSize = ArrayToDWORD(head);
         if (boxSize == 1) {
             // 64bit形式
-            if (fread(head + 8, 1, 8, m_fp.get()) != 8) {
+            if (posAndSize.second < 16 || fread(head + 8, 1, 8, m_fp.get()) != 8) {
                 break;
             }
             numRead = 16;
             boxSize = ArrayToInt64(head + 8);
         }
-        if (boxSize < numRead) {
+        if (boxSize < numRead || boxSize > posAndSize.second) {
             break;
         }
-        if (::memcmp(path, head + 4, 4) == 0 && --index < 0) {
-            if (path[5] == '\0') {
-                return std::pair<int64_t, int64_t>(_ftelli64(m_fp.get()), boxSize - numRead);
+        if (std::equal(path, path + 4, head + 4)) {
+            if (!path[4]) {
+                return std::make_pair(posAndSize.first + numRead, boxSize - numRead);
             }
-            return FindBoxPosition(path + 6, -1);
+            return FindBox(path + 5, std::make_pair(-(posAndSize.first + numRead), boxSize - numRead));
         }
-        if (_fseeki64(m_fp.get(), boxSize - numRead, SEEK_CUR) != 0) {
+        posAndSize.first += boxSize;
+        posAndSize.second -= boxSize;
+        if (posAndSize.second < 8 || my_fseek(m_fp.get(), boxSize - numRead, SEEK_CUR) != 0) {
             break;
         }
     }
     return std::pair<int64_t, int64_t>(-1, 0);
 }
 
-int CReadOnlyMpeg4File::ReadBox(const char *path, std::vector<uint8_t> &data, int64_t currentBoxPos) const
+int CReadOnlyMpeg4File::ReadBox(const char *path, std::vector<uint8_t> &data, std::pair<int64_t, int64_t> posAndSize) const
 {
-    std::pair<int64_t, int64_t> posAndSize = FindBoxPosition(path, currentBoxPos);
+    posAndSize = FindBox(path, posAndSize);
     if (posAndSize.first >= 0 && posAndSize.second <= READ_BOX_SIZE_MAX) {
         data.resize(static_cast<size_t>(posAndSize.second));
         if (data.empty() || fread(data.data(), 1, data.size(), m_fp.get()) == data.size()) {
@@ -1068,7 +1322,7 @@ int CReadOnlyMpeg4File::ReadSample(size_t index, const std::vector<int64_t> &sts
     if (data) {
         data->resize(stsz[index]);
         if (data->empty() ||
-            _fseeki64(m_fp.get(), stso[index], SEEK_SET) != 0 ||
+            my_fseek(m_fp.get(), stso[index], SEEK_SET) != 0 ||
             fread(data->data(), 1, stsz[index], m_fp.get()) != stsz[index]) {
             data->clear();
         }
@@ -1275,21 +1529,15 @@ size_t CReadOnlyMpeg4File::CreateEmptyEitPf(uint8_t *data, uint16_t nid, uint16_
     return 18;
 }
 
-size_t CReadOnlyMpeg4File::CreateTot(uint8_t *data, SYSTEMTIME st)
+size_t CReadOnlyMpeg4File::CreateTot(uint8_t *data, uint32_t t)
 {
     data[0] = 0x73;
     data[1] = 0x70;
     data[2] = 11;
-    data[5] = ((st.wHour / 10) << 4 | (st.wHour % 10)) & 0xFF;
-    data[6] = ((st.wMinute / 10) << 4 | (st.wMinute % 10)) & 0xFF;
-    data[7] = ((st.wSecond / 10) << 4 | (st.wSecond % 10)) & 0xFF;
-    st.wHour = st.wMinute = st.wSecond = 0;
-    FILETIME ft;
-    ::SystemTimeToFileTime(&st, &ft);
-    LARGE_INTEGER li;
-    li.LowPart = ft.dwLowDateTime;
-    li.HighPart = ft.dwHighDateTime;
-    int64_t mjd = (li.QuadPart - 81377568000000000LL) / (24 * 60 * 60 * 10000000LL);
+    data[5] = ((t / 3600 % 24 / 10) << 4 | (t / 3600 % 24 % 10)) & 0xFF;
+    data[6] = ((t / 60 % 60 / 10) << 4 | (t / 60 % 10)) & 0xFF;
+    data[7] = ((t % 60 / 10) << 4 | (t % 10)) & 0xFF;
+    uint32_t mjd = 40587 + t / (24 * 60 * 60);
     data[3] = mjd >> 8 & 0xFF;
     data[4] = mjd & 0xFF;
     data[8] = 0xF0;
@@ -1353,7 +1601,7 @@ bool CReadOnlyMpeg4File::AddPmtPacketsFromPmt(std::vector<uint8_t> &buf, const s
             if (x + 5 + esInfoLength > 1024 - 4) {
                 break;
             }
-            ::memcpy(data + x, &pmt[pos], 5 + esInfoLength);
+            std::copy(pmt.begin() + pos, pmt.begin() + pos + 5 + esInfoLength, data + x);
             data[x + 1] = it->second.mappedPid >> 8 | 0xE0;
             data[x + 2] = it->second.mappedPid & 0xFF;
             x += 5 + esInfoLength;

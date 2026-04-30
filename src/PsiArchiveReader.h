@@ -8,10 +8,15 @@
 #include <utility>
 #include <vector>
 
+struct fclose_deleter
+{
+    void operator()(FILE *fp) { fclose(fp); }
+};
+
 class CPsiArchiveReader
 {
 public:
-    CPsiArchiveReader() : m_fp(nullptr, fclose) {}
+    CPsiArchiveReader() {}
     bool Open(LPCTSTR path);
     void Close() { m_fp.reset(); }
     bool IsOpen() const { return !!m_fp; }
@@ -26,7 +31,7 @@ private:
     static const uint32_t UNKNOWN_TIME = 0xFFFFFFFF;
     static const uint16_t CODE_NUMBER_BEGIN = 4096;
     static const uint32_t DICTIONARY_MAX_BUFF_SIZE = 32 * 1024 * 1024;
-    std::unique_ptr<FILE, decltype(&fclose)> m_fp;
+    std::unique_ptr<FILE, fclose_deleter> m_fp;
     std::vector<uint32_t> m_timeList;
     std::vector<std::pair<std::vector<uint8_t>, uint16_t>> m_dict;
     int64_t m_chunkFileOffset;

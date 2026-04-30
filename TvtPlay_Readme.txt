@@ -1,4 +1,4 @@
-﻿TVTest TvtPlay Plugin ver.3.3 + BonDriver_Pipe.dll + TvtAudioStretchFilter.ax
+﻿TVTest TvtPlay Plugin ver.3.4 + BonDriver_Pipe.dll + TvtAudioStretchFilter.ax
 
 ■概要
 TVTest付属のBonDriver_UDPまたは添付のBonDriver_Pipeを使ってローカルTSファイルを
@@ -304,6 +304,13 @@ ChaptersFolderName【ver.1.7～】
     ら読み書きする
     # 指定しなければこの機能を無効にします。
     # 任意の名前にできますが、[=chapters]以外は非推奨です。
+ChapterIn / ChapterOut / ChapterXIn / ChapterXOut【ver.3.4～】
+    開始 / 終了 / スキップ開始 / スキップ終了チャプターのパターン
+    # たとえばChapterInを[=start]とすればチャプター名に"start"を含むものが開始チ
+    # ャプターになります。
+    # 大小文字は区別しません。先頭に^で前方一致、末尾に$で後方一致になります。
+    # スキップ開始/スキップ終了チャプターはつねに開始/終了チャプターでもあるよう
+    # に設定してください。
 SeekItemOrder / StatusItemOrder【ver.1.6～】
     シークバー / 再生位置の表示部分 のButton[00-17]に対する順序
     # たとえば[=3]とすればButton03の左隣、[=0]とすれば左端に配置されます。
@@ -374,20 +381,44 @@ PsiDataExtension【ver.2.8～】
     # MP4再生時に番組情報や放送時刻、データ放送といった情報を再現できます。
     # https://github.com/xtne6f/psisiarc が出力した書庫を利用できます。
     # BroadcastIDやTimeキーの指定は無視されます。
+ProgramTextExtension【ver.3.4～】
+    同時に読み込む番組情報ファイルの拡張子
+    # デフォルトは[=.program.txt]です。空文字のときは無効にします。
+    # 番組情報ファイルはEDCB(EpgDataCap_Bon)が出力する形式のものです。今のところ
+    # 放送IDと開始日時の情報のみ反映します。
+    # PSI/SIデータファイル適用時は無視されます。
 CheckFileAttributes【ver.3.2～】
     同時に読み込むファイルの隠し属性を検査する[=1]かどうか
     # デフォルトは[=1]です。
-    # MP4ファイルを再生するとき、同時に読み込むWebVTTファイルやPSI/SIデータファ
-    # イルが隠し属性やシステムファイル属性である場合は(MP4ファイルが同等の隠し属
-    # 性やシステムファイル属性である場合をのぞき)無視するようにします。
+    # MP4ファイルを再生するとき、同時に読み込むVttExtension、PsiDataExtension、
+    # ProgramTextExtension、Metaの各ファイルが隠し属性やシステム属性である場合、
+    # MP4ファイルが同等の隠し属性やシステム属性である場合をのぞき、無視するよう
+    # にします。
+LoadChapterTrack【ver.3.4～】
+    テキストトラック形式のチャプターを読み込む[=1]かどうか
+    # デフォルトは[=1]です。
+    # チャプターファイルがあればそちらを優先します。
+ChapterCutSec【ver.3.4～】
+    放送時刻を調整するチャプターのパターン(秒)
+    # デフォルトは[=_cut=*s]です。*の部分は1つ以上の0～9の数値に対応します。その
+    # 他のルールはChapterInキーなどと同じです。
+    # デフォルトの場合、例えば"チャプター_cut=30s"のようなチャプターがあるとき、
+    # そのチャプターの位置で放送時刻を30秒だけ加算します。
+    # PSI/SIデータファイル適用時は無視されます。
+ChapterCutMsec【ver.3.4～】
+    放送時刻を調整するチャプターのパターン(ミリ秒)
+    # デフォルトは[=_cut=*ms]です。*の解釈がミリ秒である以外はChapterCutSecと同
+    # 様です。
 BroadcastID
     ファイルの放送IDを指定
     # NetworkID=0x0001,TransportStreamID=0x0002,ServiceID=0x0003としたいときは
     # [=0x000100020003]のように指定します。
+    # PSI/SIデータや番組情報ファイル適用時は無視されます。
 Time
     ファイルの放送時刻を指定
     # [=2000-01-01T09:00:00]のように指定します。空文字のときはファイルの更新時刻
     # を放送時刻とします。
+    # PSI/SIデータや番組情報ファイル適用時は無視されます。
 Meta
     メタ情報を指定する設定ファイルの名前
     # デフォルトは[=metadata.ini]です。空文字のときは常に[MP4]セクションの指定に
@@ -403,6 +434,9 @@ Meta
     #   Time=2012-12-12T12:12:12
     #   ※foo.mp4はBroadcastID=0x111122223333,Time=2011-11-11T11:11:11
     #     bar.mp4はBroadcastID=0x444455556666,Time=2012-12-12T12:12:12になる
+    #
+    # ここでの指定は番組情報ファイルよりも優先されますが、PSI/SIデータ適用時は無
+    # 視されます。
 
 [ColorScheme]および[Style]セクション【ver.0.9～】
     セクションがあれば、デザインをプラグインで個別に設定する
