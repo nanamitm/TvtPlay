@@ -1,6 +1,7 @@
 ﻿#include <Windows.h>
 #include <Shlwapi.h>
 #include <algorithm>
+#include <random>
 #include <vector>
 #include "Util.h"
 #include "Playlist.h"
@@ -117,8 +118,8 @@ void CPlaylist::Sort(SORT_MODE mode)
         std::sort(sortList.begin(), sortList.end(), [](const PLAY_INFO *a, const PLAY_INFO *b) { return _tcsicmp(a->path, b->path) < 0; });
     }
     else if (mode == SORT_SHUFFLE) {
-        std::srand(::GetTickCount());
-        std::random_shuffle(sortList.begin(), sortList.end());
+        std::mt19937 randomEngine(::GetTickCount());
+        std::shuffle(sortList.begin(), sortList.end(), randomEngine);
     }
     m_list.clear();
     size_t pos = m_pos;
@@ -217,5 +218,5 @@ bool CPlaylist::IsPlayListFile(LPCTSTR path)
 bool CPlaylist::IsMediaFile(LPCTSTR path)
 {
     LPCTSTR ext = ::PathFindExtension(path);
-    return !_tcsicmp(ext, TEXT(".ts")) || !_tcsicmp(ext, TEXT(".m2t")) || !_tcsicmp(ext, TEXT(".m2ts")) || !_tcsicmp(ext, TEXT(".mp4"));
+    return !_tcsicmp(ext, TEXT(".ts")) || !_tcsicmp(ext, TEXT(".m2t")) || !_tcsicmp(ext, TEXT(".m2ts")) || !_tcsicmp(ext, TEXT(".mp4")) || !_tcsicmp(ext, TEXT(".mmts"));
 }

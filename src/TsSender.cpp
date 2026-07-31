@@ -1,7 +1,11 @@
 ﻿#include <WinSock2.h>
+#include <winsock2.h>
 #include <Windows.h>
 #include <Shlwapi.h>
 #include "ReadOnlyMpeg4File.h"
+#ifdef ENABLE_MMT4K
+#include "ReadOnlyMmtsFile.h"
+#endif
 #include "Util.h"
 #include "TsSender.h"
 
@@ -192,7 +196,11 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
 {
     Close();
 
+    int bufNum = 0;
+    __int64 fileSize = -1;
+
     bool fMpeg4 = !_tcsicmp(::PathFindExtension(path), TEXT(".mp4"));
+    bool fMmts = !_tcsicmp(::PathFindExtension(path), TEXT(".mmts"));
     if (fMpeg4) {
         m_file.reset(new CReadOnlyMpeg4File());
         m_fileState = FILE_ST_FIXED;
@@ -203,6 +211,23 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
         // 動画の長さなどは既知
         m_unitSize = 188;
         m_duration = static_cast<CReadOnlyMpeg4File*>(m_file.get())->GetPositionMsecFromBytes(m_file->GetSize());
+    }
+    else if (fMmts) {
+#ifdef ENABLE_MMT4K
+        m_file.reset(new CReadOnlyMmtsFile());
+        m_fileState = FILE_ST_FIXED;
+        if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) {
+            m_file.reset();
+            return false;
+        }
+        // .mmtsmap supplies the media duration without scanning or materializing
+        // the entire dantto4k output.
+        m_unitSize = 188;
+        m_duration = static_cast<CReadOnlyMmtsFile*>(m_file.get())->GetDurationMsec();
+#else
+        errorMessage = "CTsSender::Open(): MMTS playback is supported by the x64 build only";
+        return false;
+#endif
     }
     else {
         // まず読み込み共有で開いてみる
@@ -224,7 +249,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
     int readBytes = m_file->Read(buf, sizeof(buf));
     if (readBytes < 0) goto ERROR_EXIT;
 
-    if (!fMpeg4) {
+    if (!fMpeg4 && !fMmts) {
         // TSパケットの単位を決定
         m_unitSize = select_unit_size(buf, buf + readBytes);
         if (m_unitSize < 188 || 320 < m_unitSize) goto ERROR_EXIT;
@@ -248,7 +273,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
                            min(max(pcrDisconThresholdMsec,200),100000) * PCR_PER_MSEC;
 
     // バッファ確保
-    int bufNum = max(bufSize / (m_unitSize*BUFFER_LEN), 1);
+    bufNum = max(bufSize / (m_unitSize*BUFFER_LEN), 1);
     if (!m_reader.SetupBuffer(m_unitSize*BUFFER_LEN, m_unitSize, bufNum)) {
         goto ERROR_EXIT;
     }
@@ -268,7 +293,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
     m_fPurged = true;
     SetSpeed(100, 100);
 
-    __int64 fileSize = m_reader.GetFileSize();
+    fileSize = m_reader.GetFileSize();
     if (fileSize < 0) goto ERROR_EXIT;
 
     // ファイル先頭のPCRを取得
@@ -278,7 +303,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
     }
     m_initPcr = m_pcr;
 
-    if (!fMpeg4) {
+    if (!fMpeg4 && !fMmts) {
         // 動画の長さを取得
         m_duration = 0;
         // 最大で標準的なTSの末尾8秒間を調べる
@@ -633,6 +658,12 @@ bool CTsSender::SeekToEnd()
         // 時間ベースでシークできる
         return Seek(mpeg4File->GetPositionBytesFromMsec(max(m_duration - 2000, 0)), IReadOnlyFile::MOVE_METHOD_BEGIN);
     }
+#ifdef ENABLE_MMT4K
+    CReadOnlyMmtsFile *mmtsFile = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
+    if (mmtsFile) {
+        return Seek(mmtsFile->GetPositionBytesFromMsec(max(m_duration - 2000, 0)), IReadOnlyFile::MOVE_METHOD_BEGIN);
+    }
+#endif
     return Seek(-GetRate()*2, IReadOnlyFile::MOVE_METHOD_END);
 }
 
@@ -664,6 +695,14 @@ bool CTsSender::Seek(int msec)
         return Seek(mpeg4File->GetPositionBytesFromMsec(max(min(posMsec + msec - INITIAL_STORE_MSEC, m_duration - 2000), 0)),
                     IReadOnlyFile::MOVE_METHOD_BEGIN);
     }
+#ifdef ENABLE_MMT4K
+    CReadOnlyMmtsFile *mmtsFile = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
+    if (mmtsFile) {
+        int posMsec = mmtsFile->GetPositionMsecFromBytes(pos);
+        return Seek(mmtsFile->GetPositionBytesFromMsec(max(min(posMsec + msec - INITIAL_STORE_MSEC, m_duration - 2000), 0)),
+                    IReadOnlyFile::MOVE_METHOD_BEGIN);
+    }
+#endif
 
     // msec==3000を目標に0<=msec<=6000になるまで動画レートから概算シーク
     // 6ループまでに収束しなければ失敗

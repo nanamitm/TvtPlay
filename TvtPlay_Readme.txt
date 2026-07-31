@@ -79,6 +79,20 @@ BonDriver_UDPのプロセス間通信方式をパイプに改変したもので�
 使ってみてください。TVTestに対してはBonDriver_UDPのフリをするので、BonDriver_UDP
 と同じ要領で使ってください。BonDriver_UDPと同時使用もできます。
 
+■MMTSファイルの再生について【x64版のみ】
+拡張子.mmtsのファイルは、内蔵されたdantto4kのMMT/TLV変換機能でMPEG-2 TSに変換して
+から再生します。変換結果はディスクへ一時保存せず、必要な範囲だけをメモリー上で生成
+します。このため元ファイルと同程度の空きディスク容量は必要ありません。
+
+ランダムアクセスと総再生時間の取得には、dantto4kが作成する同名の.mmtsmapファイルが
+必要です。シーク時はマップ上の直前のRAP/IRAP位置から変換を再開するため、キーフレー
+ム間隔に応じて短時間の読み直しが発生します。
+
+暗号化されたパケットが残るファイルを再生するには、B-CAS/ACASカードリーダーまたは
+CasProxyServerを利用できる環境が必要です。初回に生成されるTvtPlay.iniの[MMTS]セク
+ションでSmartCardReaderName、CasProxyServer、CustomWinscardDLLを設定してください。
+CasProxyServerは"host:port"形式です。Enabled=0にするとMMTS再生を無効化できます。
+
 ■TVTest起動オプションについて
 TVTest起動時につぎのようなオプションを追加することで、プラグインの有効・無効の自
 動化などが可能です。設定キーTvtpCmdOptionでも指定できます【ver.1.5r3～】。

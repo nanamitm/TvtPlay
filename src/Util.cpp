@@ -1,4 +1,5 @@
 ﻿#include <Windows.h>
+#include <Wincrypt.h>
 #include "Util.h"
 
 

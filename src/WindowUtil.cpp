@@ -1,4 +1,5 @@
 ﻿#include <Windows.h>
+#include <cstdlib>
 #include <WindowsX.h>
 #include "WindowUtil.h"
 

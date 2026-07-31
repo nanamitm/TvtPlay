@@ -1,0 +1,3 @@
+[submodule "src/thirdparty/dantto4k"]
+	path = src/thirdparty/dantto4k
+	url = https://github.com/nanamitm/dantto4k.git
