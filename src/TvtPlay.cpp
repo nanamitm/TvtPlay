@@ -1,8 +1,12 @@
 ﻿// TVTestにtsファイル再生機能を追加するプラグイン
 // 最終更新: 2026-04-30
 // 署名: 849fa586809b0d16276cd644c6749503
+#include <WinSock2.h>
 #include <Windows.h>
 #include <WindowsX.h>
+#include <CommDlg.h>
+#include <Cderr.h>
+#include <Shellapi.h>
 #include <Shlwapi.h>
 #include <algorithm>
 #include <list>

@@ -82,6 +82,8 @@ private:
     void OpenPipe();
     void ClosePipe();
     void CloseCtrlPipe();
+    bool FilterEitPacket(BYTE *pPacket);
+    void ResetEitFilter();
     void SendData(BYTE *pData, int dataSize);
     int TransactMessage(LPCTSTR request, LPTSTR reply = nullptr);
     static DWORD DiffPcr(DWORD a, DWORD b) { return ((a-b)&0x80000000) && b-a<PCR_LAP_THRESHOLD ? 0 : a-b; }
@@ -91,6 +93,8 @@ private:
     BYTE *m_curr, *m_head, *m_tail;
     int m_unitSize;
     bool m_fTrimPacket, m_fUnderrunCtrl;
+    bool m_fDropEitSchedule, m_fHasEitContinuityCounter;
+    BYTE m_eitContinuityCounter;
     DWORD m_pcrDisconThreshold;
     CTsTimestampShifter m_tsShifter;
 

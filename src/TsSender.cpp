@@ -145,6 +145,9 @@ CTsSender::CTsSender()
     , m_unitSize(0)
     , m_fTrimPacket(false)
     , m_fUnderrunCtrl(false)
+    , m_fDropEitSchedule(false)
+    , m_fHasEitContinuityCounter(false)
+    , m_eitContinuityCounter(0)
     , m_pcrDisconThreshold(0xffffffff)
     , m_sock(INVALID_SOCKET)
     , m_udpPort(0)
@@ -999,19 +1002,20 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
 
     // m_curr:パケット処理位置, m_head:転送開始位置, m_tail:有効データの末尾
     if (fSend && m_curr && m_curr > m_head) {
-        if (m_fTrimPacket) {
-            // 転送する部分だけを188Byte単位に詰める
-            BYTE *p = m_head;
-            BYTE *q = m_head;
-            while (p <= m_curr - m_unitSize) {
-                memmove(q, p, 188);
-                p += m_unitSize;
-                q += 188;
+        // schedule EIT (0x50-0x5F) from a recording would otherwise replace
+        // TVTest's current EPG. Drop it and pack the remaining TS packets.
+        BYTE *p = m_head;
+        BYTE *q = m_head;
+        const int outputUnitSize = m_fTrimPacket ? 188 : m_unitSize;
+        while (p <= m_curr - m_unitSize) {
+            if (FilterEitPacket(p)) {
+                memmove(q, p, outputUnitSize);
+                q += outputUnitSize;
             }
-            SendData(m_head, static_cast<int>(q - m_head));
+            p += m_unitSize;
         }
-        else {
-            SendData(m_head, static_cast<int>(m_curr - m_head));
+        if (q > m_head) {
+            SendData(m_head, static_cast<int>(q - m_head));
         }
         m_lastSentPcr = m_pcr;
     }
@@ -1051,6 +1055,7 @@ bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMeth
     if (m_file->SetPointer(moveUnits * m_unitSize, moveMethod) < 0) return false;
 
     m_curr = m_head = m_tail = nullptr;
+    ResetEitFilter();
     m_fEnPcr = false;
     if (!ReadToPcr(false, true)) {
         // なるべく呼び出し前の状態に回復させるが、完全とは限らない
@@ -1067,6 +1072,51 @@ bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMeth
     m_prevPcr = m_pcr;
     m_lastSentPcr = m_pcr;
     return true;
+}
+
+
+bool CTsSender::FilterEitPacket(BYTE *pPacket)
+{
+    const WORD pid = static_cast<WORD>((pPacket[1] & 0x1F) << 8 | pPacket[2]);
+    if (pid != 0x0012) return true;
+
+    const BYTE adaptationFieldControl = (pPacket[3] >> 4) & 0x03;
+    if (pPacket[1] & 0x40) {
+        // A payload-unit start always begins a new EIT section in this stream.
+        // Do not carry a previous section's drop state across it.
+        m_fDropEitSchedule = false;
+        if (adaptationFieldControl & 0x01) {
+            int payloadOffset = 4;
+            if (adaptationFieldControl & 0x02) {
+                payloadOffset += 1 + pPacket[payloadOffset];
+            }
+            if (payloadOffset < 188) {
+                const int tableOffset = payloadOffset + 1 + pPacket[payloadOffset];
+                if (tableOffset < 188) {
+                    const BYTE tableId = pPacket[tableOffset];
+                    m_fDropEitSchedule = 0x50 <= tableId && tableId <= 0x5F;
+                }
+            }
+        }
+    }
+    if (m_fDropEitSchedule) return false;
+
+    if (adaptationFieldControl & 0x01) {
+        if (!m_fHasEitContinuityCounter) {
+            m_eitContinuityCounter = pPacket[3] & 0x0F;
+            m_fHasEitContinuityCounter = true;
+        }
+        pPacket[3] = (pPacket[3] & 0xF0) | m_eitContinuityCounter;
+        m_eitContinuityCounter = (m_eitContinuityCounter + 1) & 0x0F;
+    }
+    return true;
+}
+
+
+void CTsSender::ResetEitFilter()
+{
+    m_fDropEitSchedule = false;
+    m_fHasEitContinuityCounter = false;
 }
 
 
