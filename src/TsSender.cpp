@@ -203,7 +203,8 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
     __int64 fileSize = -1;
 
     bool fMpeg4 = !_tcsicmp(::PathFindExtension(path), TEXT(".mp4"));
-    bool fMmts = !_tcsicmp(::PathFindExtension(path), TEXT(".mmts"));
+    bool fMmts = !_tcsicmp(::PathFindExtension(path), TEXT(".mmts")) ||
+                 !_tcsicmp(::PathFindExtension(path), TEXT(".mmtsedit"));
     if (fMpeg4) {
         m_file.reset(new CReadOnlyMpeg4File());
         m_fileState = FILE_ST_FIXED;

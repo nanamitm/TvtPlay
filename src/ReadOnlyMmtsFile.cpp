@@ -3,7 +3,10 @@
 #include "ReadOnlyMmtsFile.h"
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -66,6 +69,97 @@ bool ExtractTextValue(const std::string &line, const char *key, __int64 &value)
     return ParseInteger(std::string_view(line).substr(valueBegin, end - valueBegin), value);
 }
 
+bool FindJsonValue(const std::string &text, const char *key, size_t &valueBegin, size_t searchBegin = 0)
+{
+    const std::string needle = std::string("\"") + key + "\"";
+    size_t pos = searchBegin;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        pos += needle.size();
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (pos >= text.size() || text[pos] != ':') continue;
+        ++pos;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        valueBegin = pos;
+        return true;
+    }
+    return false;
+}
+
+bool ReadJsonInteger(const std::string &text, size_t valueBegin, __int64 &value)
+{
+    if (valueBegin >= text.size()) return false;
+    const char *begin = text.data() + valueBegin;
+    const char *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    return result.ec == std::errc() && result.ptr != begin;
+}
+
+void AppendUtf8CodePoint(std::string &value, unsigned codePoint)
+{
+    if (codePoint <= 0x7F) value.push_back(static_cast<char>(codePoint));
+    else if (codePoint <= 0x7FF) {
+        value.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+        value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    }
+    else {
+        value.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+        value.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    }
+}
+
+bool ReadJsonString(const std::string &text, size_t valueBegin, std::string &value)
+{
+    if (valueBegin >= text.size() || text[valueBegin] != '"') return false;
+    value.clear();
+    for (size_t pos = valueBegin + 1; pos < text.size(); ++pos) {
+        const char ch = text[pos];
+        if (ch == '"') return true;
+        if (ch != '\\') {
+            if (static_cast<unsigned char>(ch) < 0x20) return false;
+            value.push_back(ch);
+            continue;
+        }
+        if (++pos >= text.size()) return false;
+        switch (text[pos]) {
+        case '"': value.push_back('"'); break;
+        case '\\': value.push_back('\\'); break;
+        case '/': value.push_back('/'); break;
+        case 'b': value.push_back('\b'); break;
+        case 'f': value.push_back('\f'); break;
+        case 'n': value.push_back('\n'); break;
+        case 'r': value.push_back('\r'); break;
+        case 't': value.push_back('\t'); break;
+        case 'u': {
+            if (pos + 4 >= text.size()) return false;
+            unsigned codePoint = 0;
+            for (int i = 1; i <= 4; ++i) {
+                const char hex = text[pos + i];
+                codePoint <<= 4;
+                if ('0' <= hex && hex <= '9') codePoint |= hex - '0';
+                else if ('a' <= hex && hex <= 'f') codePoint |= hex - 'a' + 10;
+                else if ('A' <= hex && hex <= 'F') codePoint |= hex - 'A' + 10;
+                else return false;
+            }
+            AppendUtf8CodePoint(value, codePoint);
+            pos += 4;
+            break;
+        }
+        default: return false;
+        }
+    }
+    return false;
+}
+
+std::wstring Utf8ToWide(const std::string &text)
+{
+    if (text.empty()) return {};
+    const int size = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) return {};
+    std::wstring result(static_cast<size_t>(size), L'\0');
+    return ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), size) == size ? result : std::wstring();
+}
+
 } // namespace
 
 CReadOnlyMmtsFile::CReadOnlyMmtsFile() = default;
@@ -93,13 +187,17 @@ bool CReadOnlyMmtsFile::LoadSettings(std::string &readerName, std::string &proxy
     return true;
 }
 
-bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath)
+bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath, LPCTSTR explicitMapPath)
 {
     TCHAR mapPath[MAX_PATH] = {};
-    if (_tcslen(mediaPath) >= _countof(mapPath)) return false;
-    _tcscpy_s(mapPath, mediaPath);
-    if (!::PathRenameExtension(mapPath, TEXT(".mmtsmap"))) return false;
-    std::ifstream map(mapPath, std::ios::binary);
+    LPCTSTR resolvedMapPath = explicitMapPath;
+    if (!resolvedMapPath) {
+        if (_tcslen(mediaPath) >= _countof(mapPath)) return false;
+        _tcscpy_s(mapPath, mediaPath);
+        if (!::PathRenameExtension(mapPath, TEXT(".mmtsmap"))) return false;
+        resolvedMapPath = mapPath;
+    }
+    std::ifstream map(resolvedMapPath, std::ios::binary);
     if (!map) return false;
     map.seekg(0, std::ios::end);
     const std::streamoff mapSize = map.tellg();
@@ -120,7 +218,9 @@ bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath)
             version != (binary3 ? 3U : 2U) || flags != 0 || tracks > MAX_MAP_POINTS ||
             mpts > MAX_MAP_POINTS || raps > MAX_MAP_POINTS || seeks > MAX_MAP_POINTS ||
             sourceSize != static_cast<uint64_t>(m_inputSize) || duration <= 0) return false;
-        m_durationMsec = duration > (std::numeric_limits<int>::max)() ? 0 : static_cast<int>(duration);
+        m_sourceDurationMsec = duration > (std::numeric_limits<int>::max)() ? 0 : static_cast<int>(duration);
+        m_durationMsec = m_sourceDurationMsec;
+        m_firstPtsMsec = firstPts > 0 ? firstPts : 0;
         for (uint32_t i = 0; i < tracks; ++i) {
             char ignored[20];
             if (!map.read(ignored, sizeof(ignored))) return false;
@@ -149,7 +249,7 @@ bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath)
         while (std::getline(map, line)) {
             __int64 time = -1, offset = -1;
             if (line.rfind("source_size=", 0) == 0) { ParseInteger(std::string_view(line).substr(12), source); }
-            else if (line.rfind("duration_ms=", 0) == 0) { if (ParseInteger(std::string_view(line).substr(12), time) && time > 0 && time <= (std::numeric_limits<int>::max)()) m_durationMsec = static_cast<int>(time); }
+            else if (line.rfind("duration_ms=", 0) == 0) { if (ParseInteger(std::string_view(line).substr(12), time) && time > 0 && time <= (std::numeric_limits<int>::max)()) m_durationMsec = m_sourceDurationMsec = static_cast<int>(time); }
             else if (line.rfind("first_video_pts_ms=", 0) == 0) { ParseInteger(std::string_view(line).substr(19), firstPts); }
             else if ((line.rfind("rap ", 0) == 0 || line.rfind("seek ", 0) == 0) &&
                      ExtractTextValue(line, "time_ms", time) && ExtractTextValue(line, "offset", offset) &&
@@ -158,6 +258,7 @@ bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath)
             }
         }
         if (source != m_inputSize || m_durationMsec <= 0) return false;
+        m_firstPtsMsec = firstPts > 0 ? firstPts : 0;
         if (firstPts > 0) for (auto *points : {&m_rapPoints, &m_seekPoints})
             for (auto &point : *points) point.timeMsec -= firstPts;
     }
@@ -169,14 +270,123 @@ bool CReadOnlyMmtsFile::LoadSidecarMap(LPCTSTR mediaPath)
     return m_durationMsec > 0;
 }
 
+bool CReadOnlyMmtsFile::LoadEdit(LPCTSTR editPath, const char *&errorMessage)
+{
+    std::ifstream edit(std::filesystem::path(editPath), std::ios::binary | std::ios::ate);
+    if (!edit) {
+        errorMessage = "CReadOnlyMmtsFile: Cannot open .mmtsedit";
+        return false;
+    }
+    const std::streamoff size = edit.tellg();
+    if (size <= 0 || size > 1024 * 1024) {
+        errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit size";
+        return false;
+    }
+    edit.seekg(0);
+    std::string json(static_cast<size_t>(size), '\0');
+    if (!edit.read(json.data(), size)) {
+        errorMessage = "CReadOnlyMmtsFile: Cannot read .mmtsedit";
+        return false;
+    }
+
+    size_t valueBegin = 0;
+    __int64 version = 0;
+    __int64 sourceSize = -1;
+    std::string source;
+    std::string map;
+    if (!FindJsonValue(json, "version", valueBegin) || !ReadJsonInteger(json, valueBegin, version) || version != 1 ||
+        !FindJsonValue(json, "sourceSize", valueBegin) || !ReadJsonInteger(json, valueBegin, sourceSize) || sourceSize < 0 ||
+        !FindJsonValue(json, "source", valueBegin) || !ReadJsonString(json, valueBegin, source) || source.empty()) {
+        errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit header";
+        return false;
+    }
+    if (FindJsonValue(json, "map", valueBegin) && !ReadJsonString(json, valueBegin, map)) {
+        errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit map path";
+        return false;
+    }
+
+    std::vector<EditSegment> segments;
+    size_t scan = 0;
+    int totalDuration = 0;
+    for (;;) {
+        __int64 start = 0, end = 0;
+        if (!FindJsonValue(json, "sourceStartMs", valueBegin, scan)) break;
+        const size_t afterStart = valueBegin + 1;
+        if (!ReadJsonInteger(json, valueBegin, start) || !FindJsonValue(json, "sourceEndMs", valueBegin, afterStart) ||
+            !ReadJsonInteger(json, valueBegin, end)) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+            return false;
+        }
+        scan = valueBegin + 1;
+        if (start < 0 || end <= start || end > (std::numeric_limits<int>::max)() ||
+            end - start > (std::numeric_limits<int>::max)() || totalDuration > (std::numeric_limits<int>::max)() - (end - start)) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit segment";
+            return false;
+        }
+        segments.push_back({static_cast<int>(start), static_cast<int>(end), totalDuration});
+        totalDuration += static_cast<int>(end - start);
+    }
+    if (segments.empty()) {
+        errorMessage = "CReadOnlyMmtsFile: .mmtsedit has no timeline segments";
+        return false;
+    }
+
+    const std::wstring sourceWide = Utf8ToWide(source);
+    const std::wstring mapWide = map.empty() ? std::wstring() : Utf8ToWide(map);
+    if (sourceWide.empty() || (!map.empty() && mapWide.empty())) {
+        errorMessage = "CReadOnlyMmtsFile: .mmtsedit path is not valid UTF-8";
+        return false;
+    }
+    try {
+        const std::filesystem::path base = std::filesystem::path(editPath).parent_path();
+        std::filesystem::path sourcePath(sourceWide);
+        if (sourcePath.is_relative()) sourcePath = base / sourcePath;
+        m_mediaPath = std::filesystem::absolute(sourcePath).lexically_normal().native();
+        if (!mapWide.empty()) {
+            std::filesystem::path mapPath(mapWide);
+            if (mapPath.is_relative()) mapPath = base / mapPath;
+            m_mapPath = std::filesystem::absolute(mapPath).lexically_normal().native();
+        }
+    }
+    catch (...) {
+        errorMessage = "CReadOnlyMmtsFile: Cannot resolve .mmtsedit paths";
+        return false;
+    }
+    if (_tcsicmp(::PathFindExtension(m_mediaPath.c_str()), TEXT(".mmts")) != 0) {
+        errorMessage = "CReadOnlyMmtsFile: .mmtsedit source is not an .mmts file";
+        return false;
+    }
+    m_editSourceSize = sourceSize;
+    m_editSegments = std::move(segments);
+    return true;
+}
+
 bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
 {
     Close();
-    if (!(flags & OPEN_FLAG_NORMAL) || (flags & OPEN_FLAG_SHARE_WRITE) || !m_input.Open(path, OPEN_FLAG_NORMAL, errorMessage)) return false;
+    const bool editFile = _tcsicmp(::PathFindExtension(path), TEXT(".mmtsedit")) == 0;
+    if (!(flags & OPEN_FLAG_NORMAL) || (flags & OPEN_FLAG_SHARE_WRITE)) return false;
+    if (editFile) {
+        if (!LoadEdit(path, errorMessage)) { Close(); return false; }
+    } else {
+        m_mediaPath = path;
+    }
+    if (!m_input.Open(m_mediaPath.c_str(), OPEN_FLAG_NORMAL, errorMessage)) { Close(); return false; }
     m_inputSize = m_input.GetSize();
-    if (m_inputSize <= 0 || !LoadSidecarMap(path)) {
+    if (m_inputSize <= 0 || (m_editSourceSize >= 0 && m_editSourceSize != m_inputSize) ||
+        !LoadSidecarMap(m_mediaPath.c_str(), m_mapPath.empty() ? nullptr : m_mapPath.c_str())) {
         errorMessage = "CReadOnlyMmtsFile: A valid .mmtsmap sidecar is required for seekable MMTS playback";
         Close(); return false;
+    }
+    if (!m_editSegments.empty()) {
+        for (const auto &segment : m_editSegments) {
+            if (segment.endMsec > m_sourceDurationMsec) {
+                errorMessage = "CReadOnlyMmtsFile: .mmtsedit segment exceeds source duration";
+                Close(); return false;
+            }
+        }
+        m_durationMsec = m_editSegments.back().programStartMsec +
+                         (m_editSegments.back().endMsec - m_editSegments.back().startMsec);
     }
     std::string readerName, proxyServer, winscardDll; bool convertResolutionGaiji = true;
     if (!LoadSettings(readerName, proxyServer, winscardDll, convertResolutionGaiji)) {
@@ -201,7 +411,9 @@ bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
 void CReadOnlyMmtsFile::Close()
 {
     m_converter.reset(); m_input.Close(); m_output.clear(); m_rapPoints.clear(); m_seekPoints.clear();
-    m_outputOffset = 0; m_inputSize = m_virtualSize = -1; m_position = 0; m_durationMsec = 0; m_eof = m_started = false;
+    m_editSegments.clear(); m_mediaPath.clear(); m_mapPath.clear();
+    m_outputOffset = 0; m_inputSize = m_virtualSize = -1; m_position = 0; m_durationMsec = m_sourceDurationMsec = 0;
+    m_firstPtsMsec = 0; m_editSourceSize = -1; m_editCurrentSegment = -1; m_eof = m_started = false;
 }
 
 int CReadOnlyMmtsFile::GetPositionMsecFromBytes(__int64 bytes) const
@@ -227,6 +439,22 @@ __int64 CReadOnlyMmtsFile::FindSourceOffset(int msec) const
 bool CReadOnlyMmtsFile::SeekToVirtualPosition(__int64 position)
 {
     const int targetMsec = GetPositionMsecFromBytes(position);
+    if (!m_editSegments.empty()) {
+        int segmentIndex = static_cast<int>(m_editSegments.size()) - 1;
+        int sourceTarget = m_editSegments.back().endMsec;
+        for (size_t i = 0; i < m_editSegments.size(); ++i) {
+            const EditSegment &segment = m_editSegments[i];
+            const int duration = segment.endMsec - segment.startMsec;
+            if (targetMsec < segment.programStartMsec + duration || i + 1 == m_editSegments.size()) {
+                segmentIndex = static_cast<int>(i);
+                sourceTarget = segment.startMsec + (std::max)(0, (std::min)(targetMsec - segment.programStartMsec, duration));
+                break;
+            }
+        }
+        if (!StartEditSegment(segmentIndex, sourceTarget)) return false;
+        m_position = position;
+        return true;
+    }
     const __int64 sourceOffset = FindSourceOffset(targetMsec);
     if (m_input.SetPointer(sourceOffset, MOVE_METHOD_BEGIN) < 0) return false;
     // A newly-created demuxer must see the stream from its initial state.  A
@@ -239,6 +467,20 @@ bool CReadOnlyMmtsFile::SeekToVirtualPosition(__int64 position)
     return true;
 }
 
+bool CReadOnlyMmtsFile::StartEditSegment(int segmentIndex, int sourceTargetMsec)
+{
+    if (segmentIndex < 0 || segmentIndex >= static_cast<int>(m_editSegments.size())) return false;
+    const EditSegment &segment = m_editSegments[segmentIndex];
+    sourceTargetMsec = (std::max)(segment.startMsec, (std::min)(sourceTargetMsec, segment.endMsec));
+    if (m_input.SetPointer(FindSourceOffset(sourceTargetMsec), MOVE_METHOD_BEGIN) < 0) return false;
+    if (m_started) m_converter->Reset();
+    else m_started = true;
+    m_converter->SetEditSegment(m_firstPtsMsec + segment.startMsec, m_firstPtsMsec + segment.endMsec,
+                                m_firstPtsMsec + segment.programStartMsec);
+    m_output.clear(); m_outputOffset = 0; m_eof = false; m_editCurrentSegment = segmentIndex;
+    return true;
+}
+
 bool CReadOnlyMmtsFile::FillOutput()
 {
     std::vector<BYTE> input(INPUT_CHUNK_SIZE);
@@ -248,6 +490,14 @@ bool CReadOnlyMmtsFile::FillOutput()
         if (read == 0) { m_eof = true; break; }
         m_converter->Push(input.data(), static_cast<size_t>(read));
         m_output = m_converter->TakeOutput(); m_outputOffset = 0;
+        if (m_editCurrentSegment >= 0 && m_converter->IsEditSegmentComplete()) {
+            const int nextSegment = m_editCurrentSegment + 1;
+            if (nextSegment >= static_cast<int>(m_editSegments.size())) {
+                m_eof = true;
+            } else if (!StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec)) {
+                return false;
+            }
+        }
     }
     return true;
 }

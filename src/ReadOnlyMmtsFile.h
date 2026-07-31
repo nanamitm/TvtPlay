@@ -30,10 +30,13 @@ public:
 
 private:
     struct MapPoint { __int64 timeMsec; __int64 offset; };
+    struct EditSegment { int startMsec; int endMsec; int programStartMsec; };
     bool LoadSettings(std::string &readerName, std::string &proxyServer,
                       std::string &winscardDll, bool &convertResolutionGaiji);
-    bool LoadSidecarMap(LPCTSTR mediaPath);
+    bool LoadSidecarMap(LPCTSTR mediaPath, LPCTSTR explicitMapPath = nullptr);
+    bool LoadEdit(LPCTSTR editPath, const char *&errorMessage);
     bool SeekToVirtualPosition(__int64 position);
+    bool StartEditSegment(int segmentIndex, int sourceTargetMsec);
     bool FillOutput();
     __int64 FindSourceOffset(int msec) const;
 
@@ -43,10 +46,17 @@ private:
     size_t m_outputOffset{};
     std::vector<MapPoint> m_rapPoints;
     std::vector<MapPoint> m_seekPoints;
+    std::vector<EditSegment> m_editSegments;
+    std::basic_string<TCHAR> m_mediaPath;
+    std::basic_string<TCHAR> m_mapPath;
     __int64 m_inputSize{-1};
     __int64 m_virtualSize{-1};
     __int64 m_position{};
     int m_durationMsec{};
+    int m_sourceDurationMsec{};
+    __int64 m_firstPtsMsec{};
+    __int64 m_editSourceSize{-1};
+    int m_editCurrentSegment{-1};
     bool m_eof{};
     bool m_started{};
 };

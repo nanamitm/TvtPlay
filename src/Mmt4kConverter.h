@@ -22,6 +22,13 @@ public:
     std::vector<uint8_t> TakeOutput();
     void Reset();
 
+    // Restrict output to one source-time range and rebase it onto the
+    // concatenated edit timeline.  Times are in the source MMT clock's
+    // millisecond representation used by .mmtsmap.
+    void SetEditSegment(int64_t sourceStartMsec, int64_t sourceEndMsec,
+                        int64_t programStartMsec);
+    bool IsEditSegmentComplete() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
