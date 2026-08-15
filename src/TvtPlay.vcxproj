@@ -77,8 +77,8 @@
     </Link>
     <PreBuildEvent>
       <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
-if not exist "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\bin\$(Configuration)-x64\tsducklib.lib" msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m</Command>
-      <Message>Building dantto4k TSDuck static libraries if necessary</Message>
+msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m</Command>
+      <Message>Building dantto4k TSDuck static libraries if out of date</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -102,8 +102,8 @@ if not exist "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\bin\$(Configur
     </Link>
     <PreBuildEvent>
       <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
-if not exist "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\bin\$(Configuration)-x64\tsducklib.lib" msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m</Command>
-      <Message>Building dantto4k TSDuck static libraries if necessary</Message>
+msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m</Command>
+      <Message>Building dantto4k TSDuck static libraries if out of date</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
