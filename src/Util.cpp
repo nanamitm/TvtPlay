@@ -615,84 +615,11 @@ void extract_adaptation_field(ADAPTATION_FIELD *dst, const unsigned char *data)
 #endif
 
 
-bool CompareLogFont(const LOGFONT &lf1, const LOGFONT &lf2)
-{
-    return lf1.lfHeight == lf2.lfHeight &&
-           lf1.lfWidth == lf2.lfWidth &&
-           lf1.lfEscapement == lf2.lfEscapement &&
-           lf1.lfOrientation == lf2.lfOrientation &&
-           lf1.lfWeight == lf2.lfWeight &&
-           lf1.lfItalic == lf2.lfItalic &&
-           lf1.lfUnderline == lf2.lfUnderline &&
-           lf1.lfStrikeOut == lf2.lfStrikeOut &&
-           lf1.lfCharSet == lf2.lfCharSet &&
-           lf1.lfOutPrecision == lf2.lfOutPrecision &&
-           lf1.lfClipPrecision == lf2.lfClipPrecision &&
-           lf1.lfQuality == lf2.lfQuality &&
-           lf1.lfPitchAndFamily == lf2.lfPitchAndFamily &&
-           !_tcscmp(lf1.lfFaceName, lf2.lfFaceName);
-}
-
-
 #if 1 // From: TVTest_0.7.23_Src/Util.cpp
 COLORREF MixColor(COLORREF Color1,COLORREF Color2,BYTE Ratio)
 {
 	return RGB((GetRValue(Color1)*Ratio+GetRValue(Color2)*(255-Ratio))/255,
 			   (GetGValue(Color1)*Ratio+GetGValue(Color2)*(255-Ratio))/255,
 			   (GetBValue(Color1)*Ratio+GetBValue(Color2)*(255-Ratio))/255);
-}
-
-
-CGlobalLock::CGlobalLock()
-	: m_hMutex(nullptr)
-	, m_fOwner(false)
-{
-}
-
-CGlobalLock::~CGlobalLock()
-{
-	Close();
-}
-
-bool CGlobalLock::Create(LPCTSTR pszName)
-{
-	if (m_hMutex!=nullptr)
-		return false;
-	SECURITY_DESCRIPTOR sd = {};
-	SECURITY_ATTRIBUTES sa = {};
-	::InitializeSecurityDescriptor(&sd,SECURITY_DESCRIPTOR_REVISION);
-	::SetSecurityDescriptorDacl(&sd,TRUE,nullptr,FALSE);
-	sa.nLength=sizeof(sa);
-	sa.lpSecurityDescriptor=&sd;
-	m_hMutex=::CreateMutex(&sa,FALSE,pszName);
-	m_fOwner=false;
-	return m_hMutex!=nullptr;
-}
-
-bool CGlobalLock::Wait(DWORD Timeout)
-{
-	if (m_hMutex==nullptr)
-		return false;
-	if (::WaitForSingleObject(m_hMutex,Timeout)==WAIT_TIMEOUT)
-		return false;
-	m_fOwner=true;
-	return true;
-}
-
-void CGlobalLock::Close()
-{
-	if (m_hMutex!=nullptr) {
-		Release();
-		::CloseHandle(m_hMutex);
-		m_hMutex=nullptr;
-	}
-}
-
-void CGlobalLock::Release()
-{
-	if (m_hMutex!=nullptr && m_fOwner) {
-		::ReleaseMutex(m_hMutex);
-		m_fOwner=false;
-	}
 }
 #endif
