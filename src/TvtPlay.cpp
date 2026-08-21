@@ -353,7 +353,7 @@ bool CTvtPlay::Initialize()
     item.MinWidth = 0;
     item.MaxWidth = -1;
     item.DefaultWidth = TVTest::StatusItemWidthByFontSize(15);
-    item.MinHeight = 0;
+    item.MinHeight = CalcStatusItemMinHeight();
     return m_pApp->RegisterStatusItem(&item);
 }
 
@@ -2017,6 +2017,39 @@ void CTvtPlay::AdjustSeekItem(int statusWidth)
         }
         pItem->SetWidth(statusWidth - rcMgn.left - rcMgn.right - cmpl);
     }
+}
+
+
+// ステータス項目に必要な最小の高さを算出する
+// 項目の描画では上下のマージンを差し引くので、その分を含めて申告しないと
+// 本体がフォント高さちょうどの行を割り当て、再生位置の文字の上下が欠ける
+int CTvtPlay::CalcStatusItemMinHeight() const
+{
+    LOGFONT logFont;
+    if (!m_pApp->GetFont(L"StatusBarFont", &logFont)) return 0;
+
+    int fontHeight = 0;
+    HFONT hfont = ::CreateFontIndirect(&logFont);
+    if (hfont) {
+        HDC hdc = ::CreateCompatibleDC(nullptr);
+        if (hdc) {
+            HFONT hfontOld = SelectFont(hdc, hfont);
+            TEXTMETRIC tm;
+            if (::GetTextMetrics(hdc, &tm)) {
+                // 内部リーディングを含む行高。DrawText()の占有高さに合わせる
+                fontHeight = tm.tmHeight;
+            }
+            SelectFont(hdc, hfontOld);
+            ::DeleteDC(hdc);
+        }
+        ::DeleteObject(hfont);
+    }
+    if (fontHeight <= 0) fontHeight = abs(logFont.lfHeight);
+    if (fontHeight <= 0) return 0;
+
+    RECT rcMgn;
+    m_statusView.GetItemMargin(&rcMgn);
+    return fontHeight + rcMgn.top + rcMgn.bottom;
 }
 
 
