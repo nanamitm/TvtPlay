@@ -43,7 +43,10 @@ TvtPlay.iniは基本的にそのまま引き継げます。
 ■使い方
 TVTestのPluginsフォルダにTvtPlay.tvtpを入れてください。BonDriver_Pipe.dllは
 TVTest.exeのあるフォルダに入れてください。TvtPlayは64bit版TVTest専用です。
-"plus"フォルダにあるTvtPlay.tvtpはTVTest0.9.0以降専用です。
+シークバーはTVTest本体のステータスバーに統合されているため、TVTest0.9.0以降専用
+です。TVTestの設定でステータスバーに「TvtPlayステータスバー」項目を追加
+してください。配色やフォントはTVTest本体の設定に従うので、TvtPlay.ini
+の配色関連の設定キーは効きません。
 
 TVTest起動オプションの最後に拡張子.ts .m2t .m2ts .mp4 .m3u .tslist いずれかのフ
 ァイルパスを付加するとプラグインは有効になり、起動時にそのファイルを開きます。起

@@ -4,18 +4,31 @@ TvtPlay is a file-playback plugin for [TVTest](https://github.com/DBCTRADO/TVTes
 It plays local transport-stream media through TVTest's `BonDriver_UDP` or
 `BonDriver_Pipe` interface.
 
-This fork is built for **64-bit TVTest only**. The current development branch
-is `work`.
+This fork is built for **64-bit TVTest only** and requires **TVTest 0.9.0 or
+later**, because the seek bar is drawn as an item of TVTest's own status bar.
+The current development branch is `work`.
 
 ## Features
 
 - Playback of `.ts`, `.m2t`, `.m2ts`, and `.mp4` files.
 - Playlist support for `.m3u` and `.tslist` files.
-- Seek, repeat, playback-speed controls, and resume support through the
-  TVTest plugin UI.
+- Seek, repeat, playback-speed controls, and resume support, presented as a
+  seek bar in TVTest's status bar.
 - `BonDriver_Pipe.dll`, an optional named-pipe alternative to
   `BonDriver_UDP.dll`.
 - Optional `TvtAudioStretchFilter.ax` for audio during speed-adjusted playback.
+
+## Status bar integration
+
+The seek bar, the transport buttons, and the position display are registered as
+a single full-row item of TVTest's status bar instead of living in a window
+TvtPlay creates and paints itself. This is the upstream `work-plus` arrangement,
+merged into this branch.
+
+Enable **TvtPlayステータスバー** in TVTest's status bar settings to show it. The
+row follows TVTest's own colours, font, and DPI, so the colour keys in
+`TvtPlay.ini` no longer have any effect; change the appearance from TVTest's
+settings instead. Every other key in `TvtPlay.ini` still applies.
 
 ## Additions in this fork
 
@@ -58,7 +71,8 @@ in recordings from polluting TVTest's program guide.
 
 Copy `TvtPlay.tvtp` to TVTest's `Plugins` directory. Copy
 `BonDriver_Pipe.dll` to the directory that contains `TVTest.exe` when using the
-pipe BonDriver.
+pipe BonDriver. Enable the plugin, then add the TvtPlay item to the status bar
+from TVTest's settings.
 
 For example:
 
