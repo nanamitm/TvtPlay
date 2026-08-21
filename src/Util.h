@@ -130,11 +130,6 @@ inline void extract_ts_header(TS_HEADER *dst, const unsigned char *packet)
     dst->continuity_counter           = packet[3] & 0x0f;
 }
 
-#define ABSTRACT_DECL			__declspec(novtable)
-#define ABSTRACT_CLASS(name)	ABSTRACT_DECL name abstract
-
-#define APP_NAME TEXT("TvtPlay")
-
 class recursive_mutex_
 {
 public:
@@ -159,25 +154,6 @@ private:
     recursive_mutex_ &m_mtx;
 };
 
-bool CompareLogFont(const LOGFONT &lf1, const LOGFONT &lf2);
 COLORREF MixColor(COLORREF Color1,COLORREF Color2,BYTE Ratio=128);
-
-class CGlobalLock
-{
-	HANDLE m_hMutex;
-	bool m_fOwner;
-
-	// delete
-	CGlobalLock(const CGlobalLock &);
-	CGlobalLock &operator=(const CGlobalLock &);
-
-public:
-	CGlobalLock();
-	~CGlobalLock();
-	bool Create(LPCTSTR pszName);
-	bool Wait(DWORD Timeout=INFINITE);
-	void Close();
-	void Release();
-};
 
 #endif // INCLUDE_UTIL_H
