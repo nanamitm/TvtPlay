@@ -81,6 +81,7 @@ private:
     void OnPreviewChange(bool fPreview);
     void AdjustSeekItem(int statusWidth);
     void SetWidthPositionItem();
+    bool GetStatusBarFont(LOGFONT *pLogFont) const;
     int CalcStatusItemMinHeight() const;
     static LRESULT CALLBACK EventCallback(UINT Event, LPARAM lParam1, LPARAM lParam2, void *pClientData);
     static BOOL CALLBACK WindowMsgCallback(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *pResult, void *pUserData);

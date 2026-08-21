@@ -2020,13 +2020,37 @@ void CTvtPlay::AdjustSeekItem(int statusWidth)
 }
 
 
+// 本体が実際に描画に使っているステータスバーのフォントを取得する
+// GetFont()はDPIやスケーリングを反映しない生のLOGFONTを返すため、本体が
+// 描画に使うフォントより大きくなりうる。GetSetting()は反映済みのものを返す
+bool CTvtPlay::GetStatusBarFont(LOGFONT *pLogFont) const
+{
+    TVTest::SettingInfo setting;
+    setting.pszName = L"StatusBarFont";
+    setting.Type = TVTest::SETTING_TYPE_DATA;
+    setting.Value.pData = pLogFont;
+    setting.ValueSize = sizeof(LOGFONT);
+    if (m_pApp->GetSetting(&setting)) return true;
+
+    // 取得できなければ項目のウィンドウのDPIを指定して取り直す
+    TVTest::StatusItemGetInfo info;
+    info.Mask = TVTest::STATUS_ITEM_GET_INFO_MASK_HWND;
+    info.ID = 1;
+    int dpi = 0;
+    if (m_pApp->GetStatusItemInfo(&info)) {
+        dpi = m_pApp->GetDPIFromWindow(info.hwnd);
+    }
+    return m_pApp->GetFont(L"StatusBarFont", pLogFont, dpi);
+}
+
+
 // ステータス項目に必要な最小の高さを算出する
 // 項目の描画では上下のマージンを差し引くので、その分を含めて申告しないと
 // 本体がフォント高さちょうどの行を割り当て、再生位置の文字の上下が欠ける
 int CTvtPlay::CalcStatusItemMinHeight() const
 {
     LOGFONT logFont;
-    if (!m_pApp->GetFont(L"StatusBarFont", &logFont)) return 0;
+    if (!GetStatusBarFont(&logFont)) return 0;
 
     int fontHeight = 0;
     HFONT hfont = ::CreateFontIndirect(&logFont);
@@ -2064,7 +2088,7 @@ void CTvtPlay::SetWidthPositionItem()
             TVTest::StatusItemGetInfo info;
             info.Mask = TVTest::STATUS_ITEM_GET_INFO_MASK_HWND;
             info.ID = 1;
-            if (m_pApp->GetFont(L"StatusBarFont", &font) && m_pApp->GetStatusItemInfo(&info)) {
+            if (GetStatusBarFont(&font) && m_pApp->GetStatusItemInfo(&info)) {
                 pItem->SetWidth(pPosItem->CalcSuitableWidth(info.hwnd, font));
             }
         }
@@ -2172,7 +2196,7 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
                     pThis->m_pApp->ThemeDrawBackground(L"status-bar.item.hot", pInfo->hdc, rc);
                 }
                 LOGFONT font;
-                if (pThis->m_pApp->GetFont(L"StatusBarFont", &font)) {
+                if (pThis->GetStatusBarFont(&font)) {
                     pThis->m_statusView.Draw(pInfo->hdc, pInfo->ItemRect, font,
                                              pThis->m_pApp->GetColor(L"StatusText"), pThis->m_pApp->GetColor(L"StatusBack"),
                                              pThis->m_pApp->GetColor(L"StatusHighlightText"), pThis->m_pApp->GetColor(L"StatusHighlightBack"));
