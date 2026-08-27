@@ -139,6 +139,7 @@ msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Co
     <ClCompile Include="ReadOnlyMmtsFile.cpp" />
     <ClCompile Include="Mmt4kConverter.cpp" />
     <ClCompile Include="thirdparty\dantto4k\src\*.cpp" Exclude="thirdparty\dantto4k\src\bonTuner.cpp;thirdparty\dantto4k\src\dantto4k.cpp;thirdparty\dantto4k\src\dllmain.cpp" />
+    <ClCompile Include="thirdparty\dantto4k\src\ttml\*.cpp" />
     <ClCompile Include="TvtPlayUtil.cpp" />
     <ClCompile Include="StatusView.cpp" />
     <ClCompile Include="TsSender.cpp">
