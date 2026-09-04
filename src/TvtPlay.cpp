@@ -18,6 +18,9 @@
 #include "TsSender.h"
 #include "Playlist.h"
 #include "ChapterMap.h"
+#ifdef ENABLE_MMT4K
+#include "thirdparty/dantto4k/src/smartCard.h"
+#endif
 
 #ifdef EN_SWC
 #include "Caption.h"
@@ -218,6 +221,12 @@ CTvtPlay::CTvtPlay()
 
 CTvtPlay::~CTvtPlay()
 {
+#ifdef ENABLE_MMT4K
+    // dantto4k is linked into this DLL without its own DllMain.  Its smart-card
+    // cleanup must therefore be told that member destruction runs under the
+    // loader lock, where calling FreeLibrary() is unsafe.
+    g_processDetaching.store(true, std::memory_order_relaxed);
+#endif
 }
 
 bool CTvtPlay::GetPluginInfo(TVTest::PluginInfo *pInfo)
