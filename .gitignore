@@ -1,0 +1,39 @@
+# MSBuild intermediate and output directories. The project files put the
+# intermediates in a folder named after the project and the binaries in one
+# named after the platform, both next to the sources.
+src/TvtPlay/
+src/x64/
+src/Release/
+src/Debug/
+BonDriver_Pipe_src/BonDriver_Pipe/
+BonDriver_Pipe_src/x64/
+BonDriver_Pipe_src/Release/
+BonDriver_Pipe_src/Debug/
+TvtAudioStretchFilter_src/x64/
+TvtAudioStretchFilter_src/Release/
+TvtAudioStretchFilter_src/Debug/
+
+# Release archives built by the workflow
+dist/
+
+# Visual Studio per-user state and its browsing database
+.vs/
+*.vcxproj.user
+*.aps
+
+# Build products, wherever they land
+*.tvtp
+*.ax
+*.dll
+*.exe
+*.exp
+*.ilk
+*.lib
+*.obj
+*.pch
+*.pdb
+*.idb
+*.iobj
+*.ipdb
+*.tlog
+*.log
