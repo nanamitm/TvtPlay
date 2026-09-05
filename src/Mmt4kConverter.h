@@ -16,8 +16,13 @@ public:
     Mmt4kConverter();
     ~Mmt4kConverter();
 
+    // useSmartCard off is the default: the file is taken to be descrambled
+    // already, no CAS handler is attached and no winscard DLL is loaded. A file
+    // that is still scrambled then decodes to noise rather than waiting for a
+    // key that will never arrive.
     bool Init(const std::string &smartCardReaderName, const std::string &casProxyServer,
-              const std::string &customWinscardDLL, bool convertResolutionGaiji);
+              const std::string &customWinscardDLL, bool convertResolutionGaiji,
+              bool useSmartCard);
     void Push(const uint8_t *data, size_t size);
     std::vector<uint8_t> TakeOutput();
     void Reset();

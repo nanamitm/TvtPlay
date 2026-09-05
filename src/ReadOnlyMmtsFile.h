@@ -32,7 +32,8 @@ private:
     struct MapPoint { __int64 timeMsec; __int64 offset; };
     struct EditSegment { int startMsec; int endMsec; int programStartMsec; };
     bool LoadSettings(std::string &readerName, std::string &proxyServer,
-                      std::string &winscardDll, bool &convertResolutionGaiji);
+                      std::string &winscardDll, bool &convertResolutionGaiji,
+                      bool &useSmartCard);
     bool LoadSidecarMap(LPCTSTR mediaPath, LPCTSTR explicitMapPath = nullptr);
     bool LoadEdit(LPCTSTR editPath, const char *&errorMessage);
     bool SeekToVirtualPosition(__int64 position);

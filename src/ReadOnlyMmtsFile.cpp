@@ -166,13 +166,15 @@ CReadOnlyMmtsFile::CReadOnlyMmtsFile() = default;
 CReadOnlyMmtsFile::~CReadOnlyMmtsFile() { Close(); }
 
 bool CReadOnlyMmtsFile::LoadSettings(std::string &readerName, std::string &proxyServer,
-                                     std::string &winscardDll, bool &convertResolutionGaiji)
+                                     std::string &winscardDll, bool &convertResolutionGaiji,
+                                     bool &useSmartCard)
 {
     TCHAR iniPath[MAX_PATH] = {};
     if (!::GetModuleFileName(g_hinstDLL, iniPath, _countof(iniPath)) ||
         !::PathRenameExtension(iniPath, TEXT(".ini"))) return false;
     if (::GetPrivateProfileInt(TEXT("MMTS"), TEXT("Enabled"), 1, iniPath) == 0) return false;
-    if (::GetPrivateProfileInt(TEXT("MMTS"), TEXT("Version"), 0, iniPath) < 2) {
+    const int version = ::GetPrivateProfileInt(TEXT("MMTS"), TEXT("Version"), 0, iniPath);
+    if (version < 2) {
         ::WritePrivateProfileString(TEXT("MMTS"), TEXT("Version"), TEXT("2"), iniPath);
         ::WritePrivateProfileString(TEXT("MMTS"), TEXT("Enabled"), TEXT("1"), iniPath);
         ::WritePrivateProfileString(TEXT("MMTS"), TEXT("SmartCardReaderName"), TEXT(""), iniPath);
@@ -180,10 +182,20 @@ bool CReadOnlyMmtsFile::LoadSettings(std::string &readerName, std::string &proxy
         ::WritePrivateProfileString(TEXT("MMTS"), TEXT("CustomWinscardDLL"), TEXT(""), iniPath);
         ::WritePrivateProfileString(TEXT("MMTS"), TEXT("ConvertResolutionGaiji"), TEXT("1"), iniPath);
     }
+    if (version < 3) {
+        // Only the key this version adds is written, so an .ini someone has
+        // already configured keeps the values in it.
+        ::WritePrivateProfileString(TEXT("MMTS"), TEXT("UseSmartCard"), TEXT("0"), iniPath);
+        ::WritePrivateProfileString(TEXT("MMTS"), TEXT("Version"), TEXT("3"), iniPath);
+    }
     readerName = ReadProfileUtf8(iniPath, TEXT("SmartCardReaderName"));
     proxyServer = ReadProfileUtf8(iniPath, TEXT("CasProxyServer"));
     winscardDll = ReadProfileUtf8(iniPath, TEXT("CustomWinscardDLL"));
     convertResolutionGaiji = ::GetPrivateProfileInt(TEXT("MMTS"), TEXT("ConvertResolutionGaiji"), 1, iniPath) != 0;
+    // Off by default: a recording is expected to be descrambled already, and
+    // reaching for a card reader that is not needed pulls a winscard DLL into
+    // the process for nothing.
+    useSmartCard = ::GetPrivateProfileInt(TEXT("MMTS"), TEXT("UseSmartCard"), 0, iniPath) != 0;
     return true;
 }
 
@@ -388,13 +400,14 @@ bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
         m_durationMsec = m_editSegments.back().programStartMsec +
                          (m_editSegments.back().endMsec - m_editSegments.back().startMsec);
     }
-    std::string readerName, proxyServer, winscardDll; bool convertResolutionGaiji = true;
-    if (!LoadSettings(readerName, proxyServer, winscardDll, convertResolutionGaiji)) {
+    std::string readerName, proxyServer, winscardDll;
+    bool convertResolutionGaiji = true, useSmartCard = false;
+    if (!LoadSettings(readerName, proxyServer, winscardDll, convertResolutionGaiji, useSmartCard)) {
         errorMessage = "CReadOnlyMmtsFile: MMTS playback is disabled or settings cannot be loaded";
         Close(); return false;
     }
     m_converter = std::make_unique<Mmt4kConverter>();
-    if (!m_converter->Init(readerName, proxyServer, winscardDll, convertResolutionGaiji)) {
+    if (!m_converter->Init(readerName, proxyServer, winscardDll, convertResolutionGaiji, useSmartCard)) {
         errorMessage = "CReadOnlyMmtsFile: Cannot initialize dantto4k";
         Close(); return false;
     }

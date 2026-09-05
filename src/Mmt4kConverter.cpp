@@ -102,12 +102,21 @@ Mmt4kConverter::Mmt4kConverter() : m_impl(std::make_unique<Impl>()) {}
 Mmt4kConverter::~Mmt4kConverter() = default;
 
 bool Mmt4kConverter::Init(const std::string &smartCardReaderName, const std::string &casProxyServer,
-                           const std::string &customWinscardDLL, bool convertResolutionGaiji)
+                           const std::string &customWinscardDLL, bool convertResolutionGaiji,
+                           bool useSmartCard)
 {
     config.smartCardReaderName = smartCardReaderName;
     config.casProxyServer = casProxyServer;
     config.customWinscardDLL = customWinscardDLL;
     config.convertResolutionGaiji = convertResolutionGaiji;
+    if (!useSmartCard) {
+        // Nothing is attached, so a scrambled packet would stall waiting for an
+        // ECM that is never answered. Take the payload as plaintext instead,
+        // which is what a descrambled recording is even when the flag in the
+        // header was left set.
+        m_impl->demuxer.setAssumeDescrambled(true);
+        return true;
+    }
     try {
         auto acasHandler = std::make_unique<AcasHandler>();
         std::unique_ptr<ISmartCard> smartCard;

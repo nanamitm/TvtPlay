@@ -90,10 +90,13 @@ BonDriver_UDPのプロセス間通信方式をパイプに改変したもので�
 必要です。シーク時はマップ上の直前のRAP/IRAP位置から変換を再開するため、キーフレー
 ム間隔に応じて短時間の読み直しが発生します。
 
-暗号化されたパケットが残るファイルを再生するには、B-CAS/ACASカードリーダーまたは
-CasProxyServerを利用できる環境が必要です。初回に生成されるTvtPlay.iniの[MMTS]セク
-ションでSmartCardReaderName、CasProxyServer、CustomWinscardDLLを設定してください。
-CasProxyServerは"host:port"形式です。Enabled=0にするとMMTS再生を無効化できます。
+既定では復号済みのファイルを前提とし、カードリーダーには一切アクセスしません。暗号
+化されたパケットが残るファイルを再生するには、初回に生成されるTvtPlay.iniの[MMTS]
+セクションでUseSmartCard=1とし、B-CAS/ACASカードリーダーまたはCasProxyServerを利用
+できる環境を用意してください。同セクションのSmartCardReaderName、CasProxyServer、
+CustomWinscardDLLで接続先を指定できます。CasProxyServerは"host:port"形式です。
+UseSmartCard=0のまま暗号化されたファイルを開いた場合は、鍵を待たずに復号済みとして
+扱うため映像が乱れます。Enabled=0にするとMMTS再生を無効化できます。
 
 ■TVTest起動オプションについて
 TVTest起動時につぎのようなオプションを追加することで、プラグインの有効・無効の自
