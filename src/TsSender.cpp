@@ -221,8 +221,12 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
         m_file.reset(new CReadOnlyMmtsFile());
         m_fileState = FILE_ST_FIXED;
         if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) {
-            m_file.reset();
-            return false;
+            errorMessage = nullptr;
+            // リモートのファイルは書き込み共有でしか開けない
+            if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL | IReadOnlyFile::OPEN_FLAG_SHARE_WRITE, errorMessage)) {
+                m_file.reset();
+                return false;
+            }
         }
         // .mmtsmap supplies the media duration without scanning or materializing
         // the entire dantto4k output.

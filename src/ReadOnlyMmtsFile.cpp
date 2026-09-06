@@ -377,13 +377,16 @@ bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
 {
     Close();
     const bool editFile = _tcsicmp(::PathFindExtension(path), TEXT(".mmtsedit")) == 0;
-    if (!(flags & OPEN_FLAG_NORMAL) || (flags & OPEN_FLAG_SHARE_WRITE)) return false;
+    if (!(flags & OPEN_FLAG_NORMAL)) return false;
     if (editFile) {
         if (!LoadEdit(path, errorMessage)) { Close(); return false; }
     } else {
         m_mediaPath = path;
     }
-    if (!m_input.Open(m_mediaPath.c_str(), OPEN_FLAG_NORMAL, errorMessage)) { Close(); return false; }
+    // The caller may retry with OPEN_FLAG_SHARE_WRITE: CReadOnlyLocalFile refuses
+    // remote paths without it.  The stream still has to be a finished recording,
+    // which the .mmtsmap size check below enforces.
+    if (!m_input.Open(m_mediaPath.c_str(), flags, errorMessage)) { Close(); return false; }
     m_inputSize = m_input.GetSize();
     if (m_inputSize <= 0 || (m_editSourceSize >= 0 && m_editSourceSize != m_inputSize) ||
         !LoadSidecarMap(m_mediaPath.c_str(), m_mapPath.empty() ? nullptr : m_mapPath.c_str())) {
