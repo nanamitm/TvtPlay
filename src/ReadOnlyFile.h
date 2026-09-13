@@ -21,6 +21,8 @@ public:
     virtual __int64 SetPointer(__int64 distanceToMove, MOVE_METHOD moveMethod) = 0;
     virtual __int64 GetSize() const = 0;
     virtual bool IsShareWrite() const = 0;
+    // Maximum byte rewind required by a buffered consumer.
+    virtual void SetRewindSize(size_t) {}
 private:
     IReadOnlyFile(const IReadOnlyFile &);
     IReadOnlyFile &operator=(const IReadOnlyFile &);

@@ -414,10 +414,11 @@ bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
         errorMessage = "CReadOnlyMmtsFile: Cannot initialize dantto4k";
         Close(); return false;
     }
-    // The map's source size is a much better estimate of the remuxed TS
-    // bitrate than a fixed rate (8K services can exceed 80 Mbps).
-    m_virtualSize = m_inputSize;
-    if (m_virtualSize <= 0 || !SeekToVirtualPosition(0)) {
+    // Estimate only for CTsSender's buffer sizing. This is neither a byte
+    // address space for time seeks nor an EOF boundary for remuxed output.
+    m_virtualSize = static_cast<__int64>(static_cast<long double>(m_inputSize) *
+                                        m_durationMsec / m_sourceDurationMsec);
+    if (m_virtualSize <= 0 || !SeekToMsec(0)) {
         errorMessage = "CReadOnlyMmtsFile: Cannot initialize MMTS stream";
         Close(); return false;
     }
@@ -430,18 +431,7 @@ void CReadOnlyMmtsFile::Close()
     m_editSegments.clear(); m_mediaPath.clear(); m_mapPath.clear();
     m_outputOffset = 0; m_inputSize = m_virtualSize = -1; m_position = 0; m_durationMsec = m_sourceDurationMsec = 0;
     m_firstPtsMsec = 0; m_editSourceSize = -1; m_editCurrentSegment = -1; m_eof = m_started = false;
-}
-
-int CReadOnlyMmtsFile::GetPositionMsecFromBytes(__int64 bytes) const
-{
-    if (m_virtualSize <= 0 || m_durationMsec <= 0) return 0;
-    return static_cast<int>((std::max)(__int64(0), (std::min)(bytes, m_virtualSize)) * m_durationMsec / m_virtualSize);
-}
-
-__int64 CReadOnlyMmtsFile::GetPositionBytesFromMsec(int msec) const
-{
-    if (m_virtualSize <= 0 || m_durationMsec <= 0) return 0;
-    return static_cast<__int64>((std::max)(0, (std::min)(msec, m_durationMsec))) * m_virtualSize / m_durationMsec;
+    m_seekMsec = -1;
 }
 
 __int64 CReadOnlyMmtsFile::FindSourceOffset(int msec) const
@@ -452,9 +442,21 @@ __int64 CReadOnlyMmtsFile::FindSourceOffset(int msec) const
     return offset;
 }
 
-bool CReadOnlyMmtsFile::SeekToVirtualPosition(__int64 position)
+bool CReadOnlyMmtsFile::SeekToMsec(int targetMsec)
 {
-    const int targetMsec = GetPositionMsecFromBytes(position);
+    if (!m_converter || targetMsec < 0 || targetMsec > m_durationMsec) return false;
+    // Opening probes the initial output and then seeks back to zero. Reuse
+    // those bytes without resetting the freshly initialized demuxer.
+    if (targetMsec == 0 && m_seekMsec == 0 && !m_output.empty() &&
+        m_position == static_cast<__int64>(m_outputOffset)) {
+        m_outputOffset = 0; m_position = 0;
+        return true;
+    }
+    if (targetMsec == m_durationMsec) {
+        m_output.clear(); m_outputOffset = 0; m_position = 0; m_eof = true;
+        m_seekMsec = targetMsec;
+        return true;
+    }
     if (!m_editSegments.empty()) {
         int segmentIndex = static_cast<int>(m_editSegments.size()) - 1;
         int sourceTarget = m_editSegments.back().endMsec;
@@ -468,7 +470,8 @@ bool CReadOnlyMmtsFile::SeekToVirtualPosition(__int64 position)
             }
         }
         if (!StartEditSegment(segmentIndex, sourceTarget)) return false;
-        m_position = position;
+        m_position = 0;
+        m_seekMsec = targetMsec;
         return true;
     }
     const __int64 sourceOffset = FindSourceOffset(targetMsec);
@@ -479,7 +482,8 @@ bool CReadOnlyMmtsFile::SeekToVirtualPosition(__int64 position)
     // state through Mmt4kConverter::Reset().
     if (m_started) m_converter->Reset();
     else m_started = true;
-    m_output.clear(); m_outputOffset = 0; m_eof = false; m_position = position;
+    m_output.clear(); m_outputOffset = 0; m_eof = false; m_position = 0;
+    m_seekMsec = targetMsec;
     return true;
 }
 
@@ -507,15 +511,26 @@ bool CReadOnlyMmtsFile::FillOutput()
             if (nextSegment >= static_cast<int>(m_editSegments.size())) {
                 m_eof = true;
                 break;
-            } else if (!StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec)) {
-                return false;
+            } else {
+                // Preserve history needed by the consumer's read-ahead rewind.
+                auto history = std::move(m_output);
+                const bool started = StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec);
+                m_output = std::move(history);
+                m_outputOffset = m_output.size();
+                if (!started) return false;
             }
         }
         const int read = m_input.Read(input.data(), static_cast<int>(input.size()));
         if (read < 0) return false;
         if (read == 0) { m_eof = true; break; }
         m_converter->Push(input.data(), static_cast<size_t>(read));
-        m_output = m_converter->TakeOutput(); m_outputOffset = 0;
+        auto output = m_converter->TakeOutput();
+        if (!output.empty()) {
+            const size_t keep = (std::min)(m_rewindSize, m_output.size());
+            m_output.erase(m_output.begin(), m_output.end() - keep);
+            m_outputOffset = keep;
+            m_output.insert(m_output.end(), output.begin(), output.end());
+        }
     }
     return true;
 }
@@ -523,7 +538,6 @@ bool CReadOnlyMmtsFile::FillOutput()
 int CReadOnlyMmtsFile::Read(BYTE *pBuf, int numToRead)
 {
     if (!pBuf || numToRead <= 0 || !m_converter) return -1;
-    if (m_position >= m_virtualSize) return 0;
     if (!FillOutput()) return -1;
     if (m_outputOffset == m_output.size()) return 0;
 
@@ -541,12 +555,14 @@ int CReadOnlyMmtsFile::Read(BYTE *pBuf, int numToRead)
 
 __int64 CReadOnlyMmtsFile::SetPointer(__int64 distanceToMove, MOVE_METHOD moveMethod)
 {
-    const __int64 base = moveMethod == MOVE_METHOD_CURRENT ? m_position : moveMethod == MOVE_METHOD_END ? m_virtualSize : 0;
-    if (base < 0 || distanceToMove > m_virtualSize - base || distanceToMove < -base) return -1;
+    // Byte offsets are local to the current conversion run, not timestamps.
+    if (moveMethod == MOVE_METHOD_END) return -1;
+    const __int64 base = moveMethod == MOVE_METHOD_CURRENT ? m_position : 0;
+    if (distanceToMove < -base || distanceToMove > (std::numeric_limits<__int64>::max)() - base) return -1;
     const __int64 target = base + distanceToMove;
     if (target == m_position) return target;
-    // CBufferedFileReader frequently rewinds inside the most recently produced
-    // chunk. Keep that chunk as the bounded cache instead of restarting dantto4k.
+    // Rewinds use retained output bytes, even across conversion chunks and
+    // edit boundaries. Never reinterpret an output byte offset as source time.
     const __int64 cachedBegin = m_position - static_cast<__int64>(m_outputOffset);
     const __int64 cachedEnd = cachedBegin + static_cast<__int64>(m_output.size());
     if (target >= cachedBegin && target <= cachedEnd) {
@@ -554,7 +570,7 @@ __int64 CReadOnlyMmtsFile::SetPointer(__int64 distanceToMove, MOVE_METHOD moveMe
         m_position = target;
         return target;
     }
-    return SeekToVirtualPosition(target) ? target : -1;
+    return target == 0 && SeekToMsec(0) ? 0 : -1;
 }
 
 #endif // ENABLE_MMT4K

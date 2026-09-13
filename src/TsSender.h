@@ -76,6 +76,9 @@ private:
     bool ReadToPcr(bool fSend, bool fSyncRead);
     void RotateBuffer(bool fSend, bool fSyncRead);
     bool Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMethod);
+#ifdef ENABLE_MMT4K
+    bool SeekMmts(int msec);
+#endif
     bool SeekToBoundary(__int64 predicted, __int64 range, BYTE *pWork, int workSize);
     void OpenSocket();
     void CloseSocket();

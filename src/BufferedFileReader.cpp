@@ -45,6 +45,7 @@ bool CBufferedFileReader::SetupBuffer(int bufSize, int bufPreSize, int bufNum)
         m_tail = m_queue.begin();
         m_bufSize = bufSize;
         m_bufPreSize = bufPreSize;
+        m_file->SetRewindSize(static_cast<size_t>(m_bufSize) * m_queue.size());
         m_fRead = false;
         m_hThreadEvent = ::CreateEvent(nullptr, FALSE, FALSE, nullptr);
         if (m_hThreadEvent) {

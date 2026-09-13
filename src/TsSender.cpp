@@ -646,6 +646,9 @@ bool CTsSender::SeekToBegin()
     if (!m_fPause) TransactMessage(TEXT("PURGE"));
     else Pause(true, true);
 
+#ifdef ENABLE_MMT4K
+    if (dynamic_cast<CReadOnlyMmtsFile*>(m_file.get())) return SeekMmts(0);
+#endif
     return Seek(0, IReadOnlyFile::MOVE_METHOD_BEGIN);
 }
 
@@ -669,7 +672,7 @@ bool CTsSender::SeekToEnd()
 #ifdef ENABLE_MMT4K
     CReadOnlyMmtsFile *mmtsFile = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
     if (mmtsFile) {
-        return Seek(mmtsFile->GetPositionBytesFromMsec(max(m_duration - 2000, 0)), IReadOnlyFile::MOVE_METHOD_BEGIN);
+        return SeekMmts(max(m_duration - 2000, 0));
     }
 #endif
     return Seek(-GetRate()*2, IReadOnlyFile::MOVE_METHOD_END);
@@ -706,9 +709,9 @@ bool CTsSender::Seek(int msec)
 #ifdef ENABLE_MMT4K
     CReadOnlyMmtsFile *mmtsFile = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
     if (mmtsFile) {
-        int posMsec = mmtsFile->GetPositionMsecFromBytes(pos);
-        return Seek(mmtsFile->GetPositionBytesFromMsec(max(min(posMsec + msec - INITIAL_STORE_MSEC, m_duration - 2000), 0)),
-                    IReadOnlyFile::MOVE_METHOD_BEGIN);
+        // Remuxed byte counts do not measure progress through an edited timeline.
+        const __int64 target = static_cast<__int64>(GetPosition()) + msec - INITIAL_STORE_MSEC;
+        return SeekMmts(static_cast<int>(max(min(target, static_cast<__int64>(m_duration) - 2000), 0)));
     }
 #endif
 
@@ -1049,6 +1052,33 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
 
 // シークする
 // シーク後、最初のPCRの位置まで読むことができればtrueを返す
+#ifdef ENABLE_MMT4K
+bool CTsSender::SeekMmts(int msec)
+{
+    auto *file = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
+    if (!file) return false;
+    m_reader.Flush();
+    const bool hadPcr = m_fEnPcr;
+    const int previousMsec = hadPcr ? GetPosition() : 0;
+    if (!file->SeekToMsec(msec)) return false;
+    m_curr = m_head = m_tail = nullptr;
+    ResetEitFilter();
+    m_fEnPcr = false;
+    const bool success = ReadToPcr(false, true);
+    if (!success && hadPcr && file->SeekToMsec(previousMsec)) {
+        m_curr = m_head = m_tail = nullptr;
+        ResetEitFilter();
+        m_fEnPcr = false;
+        ReadToPcr(false, true);
+    }
+    if (m_fEnPcr) {
+        m_prevPcr = m_pcr;
+        m_lastSentPcr = m_pcr;
+    }
+    return success;
+}
+#endif
+
 bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMethod)
 {
     m_reader.Flush();
