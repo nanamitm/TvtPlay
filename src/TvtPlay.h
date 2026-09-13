@@ -83,6 +83,7 @@ private:
     void SetWidthPositionItem();
     bool GetStatusBarFont(LOGFONT *pLogFont) const;
     void UpdateStatusTooltip(HWND hwnd, const POINT &cursorPos, const RECT &itemRect);
+    void ApplyStatusTooltipTheme();
     void HideStatusTooltip();
     void DestroyStatusTooltip();
     static LRESULT CALLBACK EventCallback(UINT Event, LPARAM lParam1, LPARAM lParam2, void *pClientData);

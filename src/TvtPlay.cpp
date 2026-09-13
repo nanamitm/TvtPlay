@@ -9,6 +9,7 @@
 #include <Shellapi.h>
 #include <Shlwapi.h>
 #include <CommCtrl.h>
+#include <UxTheme.h>
 #include <algorithm>
 #include <list>
 #include <vector>
@@ -2088,6 +2089,7 @@ void CTvtPlay::UpdateStatusTooltip(HWND hwnd, const POINT &cursorPos, const RECT
                                          hwnd, nullptr, g_hinstDLL, nullptr);
         if (!m_hwndTooltip) return;
         m_hwndTooltipOwner = hwnd;
+        ApplyStatusTooltipTheme();
         // 改行を有効にする
         ::SendMessage(m_hwndTooltip, TTM_SETMAXTIPWIDTH, 0, 480);
         TOOLINFO ti = {};
@@ -2144,6 +2146,18 @@ void CTvtPlay::UpdateStatusTooltip(HWND hwnd, const POINT &cursorPos, const RECT
     msg.time = ::GetMessageTime();
     ::GetCursorPos(&msg.pt);
     ::SendMessage(m_hwndTooltip, TTM_RELAYEVENT, 0, reinterpret_cast<LPARAM>(&msg));
+}
+
+// ツールチップの見た目をステータスバーの配色に合わせる
+void CTvtPlay::ApplyStatusTooltipTheme()
+{
+    if (m_hwndTooltip && ::IsWindow(m_hwndTooltip)) {
+        // プラグインからは本体のダークモード状態を取得できないので背景色の明るさで判断する
+        COLORREF cr = m_pApp->GetColor(L"StatusBack");
+        bool fDark = GetRValue(cr) * 299 + GetGValue(cr) * 587 + GetBValue(cr) * 114 < 128 * 1000;
+        // 本体がダークモードを許可していないときは通常の見た目のままになる
+        ::SetWindowTheme(m_hwndTooltip, fDark ? L"DarkMode_Explorer" : nullptr, nullptr);
+    }
 }
 
 void CTvtPlay::HideStatusTooltip()
@@ -2262,6 +2276,10 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
                 ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
             }
         }
+        break;
+    case TVTest::EVENT_COLORCHANGE:
+        // 色の設定が変化した
+        pThis->ApplyStatusTooltipTheme();
         break;
     case TVTest::EVENT_FILTERGRAPH_FINALIZED:
         // フィルタグラフの終了処理終了
