@@ -82,6 +82,9 @@ private:
     void AdjustSeekItem(int statusWidth);
     void SetWidthPositionItem();
     bool GetStatusBarFont(LOGFONT *pLogFont) const;
+    void UpdateStatusTooltip(HWND hwnd, const POINT &cursorPos, const RECT &itemRect);
+    void HideStatusTooltip();
+    void DestroyStatusTooltip();
     static LRESULT CALLBACK EventCallback(UINT Event, LPARAM lParam1, LPARAM lParam2, void *pClientData);
     static BOOL CALLBACK WindowMsgCallback(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *pResult, void *pUserData);
     static LRESULT CALLBACK FrameWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -107,6 +110,8 @@ private:
 
     // コントロール
     HWND m_hwndFrame;
+    HWND m_hwndTooltip, m_hwndTooltipOwner;
+    int m_tooltipItemID;
     bool m_fSeekDrawOfs, m_fSeekDrawTot, m_fPosDrawTot;
     bool m_fAutoClose;
     int m_seekItemMinWidth, m_posItemWidth;

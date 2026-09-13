@@ -8,6 +8,7 @@
 #include <Cderr.h>
 #include <Shellapi.h>
 #include <Shlwapi.h>
+#include <CommCtrl.h>
 #include <algorithm>
 #include <list>
 #include <vector>
@@ -146,6 +147,9 @@ CTvtPlay::CTvtPlay()
     , m_fShowOpenDialog(false)
     , m_fRaisePriority(false)
     , m_hwndFrame(nullptr)
+    , m_hwndTooltip(nullptr)
+    , m_hwndTooltipOwner(nullptr)
+    , m_tooltipItemID(-1)
     , m_fSeekDrawOfs(false)
     , m_fSeekDrawTot(false)
     , m_fPosDrawTot(false)
@@ -831,6 +835,7 @@ bool CTvtPlay::EnablePlugin(bool fEnable) {
         info.StateMask = TVTest::STATUS_ITEM_STATE_VISIBLE;
         info.State = 0;
         m_pApp->SetStatusItem(&info);
+        DestroyStatusTooltip();
 
         if (m_hwndFrame) {
             ::DestroyWindow(m_hwndFrame);
@@ -2053,6 +2058,114 @@ bool CTvtPlay::GetStatusBarFont(LOGFONT *pLogFont) const
 }
 
 
+// ステータス項目上のカーソル位置に応じてツールチップを更新する
+// ツールチップの表示遅延や消去はマウス移動を中継してツールチップコントロールに任せる
+void CTvtPlay::UpdateStatusTooltip(HWND hwnd, const POINT &cursorPos, const RECT &itemRect)
+{
+    int itemID = m_statusView.GetCurItem();
+    RECT rc;
+    if ((itemID != STATUS_ITEM_BUTTON + ID_COMMAND_OPEN && itemID != STATUS_ITEM_BUTTON + ID_COMMAND_LOOP) ||
+        !m_statusView.GetHotRect(itemRect, &rc))
+    {
+        if (m_tooltipItemID >= 0) HideStatusTooltip();
+        return;
+    }
+    if (itemID != m_tooltipItemID) {
+        // 隣のボタンに移ったときは前の位置に表示したままにしない
+        HideStatusTooltip();
+        m_tooltipItemID = itemID;
+    }
+
+    if (m_hwndTooltip && (!::IsWindow(m_hwndTooltip) || m_hwndTooltipOwner != hwnd)) {
+        // 所有ウィンドウの破棄とともに破棄されている場合もある
+        DestroyStatusTooltip();
+    }
+    if (!m_hwndTooltip) {
+        INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_WIN95_CLASSES};
+        ::InitCommonControlsEx(&icc);
+        m_hwndTooltip = ::CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASS, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                         hwnd, nullptr, g_hinstDLL, nullptr);
+        if (!m_hwndTooltip) return;
+        m_hwndTooltipOwner = hwnd;
+        // 改行を有効にする
+        ::SendMessage(m_hwndTooltip, TTM_SETMAXTIPWIDTH, 0, 480);
+        TOOLINFO ti = {};
+        // コモンコントロールのバージョンによらず受け付けられるサイズ
+        ti.cbSize = TTTOOLINFO_V1_SIZE;
+        ti.uFlags = 0;
+        ti.hwnd = hwnd;
+        ti.uId = 1;
+        ti.rect = rc;
+        ti.lpszText = const_cast<LPTSTR>(TEXT(""));
+        if (!::SendMessage(m_hwndTooltip, TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&ti))) {
+            DestroyStatusTooltip();
+            return;
+        }
+    }
+
+    TCHAR text[256];
+    if (itemID == STATUS_ITEM_BUTTON + ID_COMMAND_OPEN) {
+        _tcscpy_s(text, TEXT("ファイルを開く\nクリックでダイアログからファイルを選んで開きます"));
+    }
+    else {
+        _tcscpy_s(text, IsSingleRepeat() ? TEXT("ループ: シングルリピート\n再生中のファイルを繰り返します\n(クリックで「リピートしない」に切り替え)") :
+                        IsAllRepeat() ? TEXT("ループ: 全体リピート\n再生リストの最後まで再生すると先頭のファイルに戻ります\n(クリックで「シングルリピート」に切り替え)") :
+                                        TEXT("ループ: リピートしない\n(クリックで「全体リピート」に切り替え)"));
+    }
+    // 右クリックに割り当てられたコマンドがあれば添える
+    const CButtonStatusItem *pButton = dynamic_cast<const CButtonStatusItem*>(m_statusView.GetItemByID(itemID));
+    int subCmdID = pButton ? pButton->GetSubID() - STATUS_ITEM_BUTTON : ID_COMMAND_NOP;
+    if (subCmdID == ID_COMMAND_OPEN_POPUP) {
+        _tcscat_s(text, TEXT("\n右クリックでファイル一覧から選んで開きます"));
+    }
+    else if (subCmdID != ID_COMMAND_NOP) {
+        for (int i = 0; i < _countof(COMMAND_LIST); ++i) {
+            if (COMMAND_LIST[i].ID == subCmdID) {
+                _tcscat_s(text, TEXT("\n右クリック: "));
+                _tcscat_s(text, COMMAND_LIST[i].pszName);
+                break;
+            }
+        }
+    }
+    TOOLINFO ti = {};
+    ti.cbSize = TTTOOLINFO_V1_SIZE;
+    ti.hwnd = hwnd;
+    ti.uId = 1;
+    ti.rect = rc;
+    ::SendMessage(m_hwndTooltip, TTM_NEWTOOLRECT, 0, reinterpret_cast<LPARAM>(&ti));
+    ti.lpszText = const_cast<LPTSTR>(text);
+    ::SendMessage(m_hwndTooltip, TTM_UPDATETIPTEXT, 0, reinterpret_cast<LPARAM>(&ti));
+
+    MSG msg = {};
+    msg.hwnd = hwnd;
+    msg.message = WM_MOUSEMOVE;
+    msg.lParam = MAKELPARAM(cursorPos.x, cursorPos.y);
+    msg.time = ::GetMessageTime();
+    ::GetCursorPos(&msg.pt);
+    ::SendMessage(m_hwndTooltip, TTM_RELAYEVENT, 0, reinterpret_cast<LPARAM>(&msg));
+}
+
+void CTvtPlay::HideStatusTooltip()
+{
+    if (m_hwndTooltip && ::IsWindow(m_hwndTooltip)) {
+        // 表示待ちも取り消すため一旦無効にする
+        ::SendMessage(m_hwndTooltip, TTM_ACTIVATE, FALSE, 0);
+        ::SendMessage(m_hwndTooltip, TTM_ACTIVATE, TRUE, 0);
+    }
+    m_tooltipItemID = -1;
+}
+
+void CTvtPlay::DestroyStatusTooltip()
+{
+    if (m_hwndTooltip && ::IsWindow(m_hwndTooltip)) {
+        ::DestroyWindow(m_hwndTooltip);
+    }
+    m_hwndTooltip = nullptr;
+    m_hwndTooltipOwner = nullptr;
+}
+
+
 // 再生位置アイテムの幅を設定する
 void CTvtPlay::SetWidthPositionItem()
 {
@@ -2207,6 +2320,9 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
             case TVTest::STATUS_ITEM_EVENT_ENTER:
             case TVTest::STATUS_ITEM_EVENT_LEAVE:
                 // フォーカスが当たった/離れた
+                if (pInfo->Event == TVTest::STATUS_ITEM_EVENT_LEAVE) {
+                    pThis->HideStatusTooltip();
+                }
                 if (pThis->m_statusView.OnViewEvent(
                         pInfo->Event == TVTest::STATUS_ITEM_EVENT_ENTER ? CStatusView::VIEW_EVENT_ENTER : CStatusView::VIEW_EVENT_LEAVE)) {
                     pThis->m_pApp->StatusItemNotify(1, TVTest::STATUS_ITEM_NOTIFY_REDRAW);
@@ -2228,8 +2344,15 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
                 pInfo->Action == TVTest::STATUS_ITEM_MOUSE_ACTION_RDOUBLECLICK ? CStatusView::MOUSE_ACTION_RDOWN :
                 pInfo->Action == TVTest::STATUS_ITEM_MOUSE_ACTION_MOVE ? CStatusView::MOUSE_ACTION_MOVE : CStatusView::MOUSE_ACTION_NONE;
             if (action != CStatusView::MOUSE_ACTION_NONE) {
+                if (action != CStatusView::MOUSE_ACTION_MOVE) {
+                    // ポップアップメニューなどに重ならないようにする
+                    pThis->HideStatusTooltip();
+                }
                 if (pThis->m_statusView.OnMouseAction(action, pInfo->hwnd, pInfo->CursorPos, pInfo->ItemRect)) {
                     pThis->m_pApp->StatusItemNotify(1, TVTest::STATUS_ITEM_NOTIFY_REDRAW);
+                }
+                if (action == CStatusView::MOUSE_ACTION_MOVE) {
+                    pThis->UpdateStatusTooltip(pInfo->hwnd, pInfo->CursorPos, pInfo->ItemRect);
                 }
                 return TRUE;
             }
