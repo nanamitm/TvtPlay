@@ -501,19 +501,21 @@ bool CReadOnlyMmtsFile::FillOutput()
 {
     std::vector<BYTE> input(INPUT_CHUNK_SIZE);
     while (!m_eof && m_outputOffset == m_output.size()) {
+        // Switch only after the previous segment's output has been consumed.
+        if (m_editCurrentSegment >= 0 && m_converter->IsEditSegmentComplete()) {
+            const int nextSegment = m_editCurrentSegment + 1;
+            if (nextSegment >= static_cast<int>(m_editSegments.size())) {
+                m_eof = true;
+                break;
+            } else if (!StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec)) {
+                return false;
+            }
+        }
         const int read = m_input.Read(input.data(), static_cast<int>(input.size()));
         if (read < 0) return false;
         if (read == 0) { m_eof = true; break; }
         m_converter->Push(input.data(), static_cast<size_t>(read));
         m_output = m_converter->TakeOutput(); m_outputOffset = 0;
-        if (m_editCurrentSegment >= 0 && m_converter->IsEditSegmentComplete()) {
-            const int nextSegment = m_editCurrentSegment + 1;
-            if (nextSegment >= static_cast<int>(m_editSegments.size())) {
-                m_eof = true;
-            } else if (!StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec)) {
-                return false;
-            }
-        }
     }
     return true;
 }
