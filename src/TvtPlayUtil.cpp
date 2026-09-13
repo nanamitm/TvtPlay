@@ -393,7 +393,7 @@ void CButtonStatusItem::Draw(HDC hdc, const RECT *pRect)
     if (cmdID == ID_COMMAND_REPEAT_CHAPTER) {
         iconPos = m_pPlugin->IsRepeatChapterEnabled() ? 1 : 0;
     }
-    if (cmdID == ID_COMMAND_SKIP_X_CHAPTER) {
+    else if (cmdID == ID_COMMAND_SKIP_X_CHAPTER) {
         iconPos = m_pPlugin->IsSkipXChapterEnabled() ? 1 : 0;
     }
     else if (cmdID == ID_COMMAND_LOOP) {
