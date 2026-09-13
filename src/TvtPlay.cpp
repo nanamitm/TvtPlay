@@ -1920,7 +1920,8 @@ void CTvtPlay::OnCommand(int id, const POINT *pPt, UINT flags)
         SeekToBegin();
         break;
     case ID_COMMAND_SEEK_END:
-        if (m_playlist.Get().size() >= 2 && m_playlist.Next(IsAllRepeat())) OpenCurrent();
+        // シングルリピート時は終端から先頭に戻れるよう次のファイルに移らない
+        if (!IsSingleRepeat() && m_playlist.Get().size() >= 2 && m_playlist.Next(IsAllRepeat())) OpenCurrent();
         else SeekToEnd();
         break;
     case ID_COMMAND_SEEK_PREV:
