@@ -24,7 +24,9 @@ public:
     CThumbnailGenerator();
     ~CThumbnailGenerator();
     bool Start(HWND hwndNotify, UINT notifyMsg);
-    void Stop();
+    // fWaitがfalseなら処理中の生成の終わりを待たずに戻る(スレッドは打ち切ったところで自分で終わる)
+    // 待たずに止めたスレッドも、次にfWaitをtrueにして止めたときにまとめて待つ
+    void Stop(bool fWait);
     void Request(int generation, LPCTSTR path, int msec, int durMsec, int width);
     std::unique_ptr<THUMBNAIL_IMAGE> TakeResult();
     static bool IsSupportedFile(LPCTSTR path);
@@ -37,21 +39,29 @@ private:
         int durMsec;
         int width;
     };
+    // スレッドと共有する状態。待たずに止めたスレッドが終わるまで、スレッドの側も持ち続ける
+    struct SHARED {
+        SHARED();
+        ~SHARED();
+        bool IsSuperseded(int serial);
+        HANDLE hEvent;
+        HWND hwndNotify;
+        UINT notifyMsg;
+        recursive_mutex_ lock;
+        bool fStop;
+        int serial;
+        REQUEST request;
+        bool fRequested;
+        std::unique_ptr<THUMBNAIL_IMAGE> result;
+    };
     class CDecoder;
     static unsigned int __stdcall ThreadProc(LPVOID pParam);
-    void Run();
-    bool IsSuperseded(int serial);
+    static void Run(SHARED &shared);
+    void ReapStoppedThreads(bool fWait);
 
     HANDLE m_hThread;
-    HANDLE m_hEvent;
-    HWND m_hwndNotify;
-    UINT m_notifyMsg;
-    recursive_mutex_ m_lock;
-    bool m_fStop;
-    int m_serial;
-    REQUEST m_request;
-    bool m_fRequested;
-    std::unique_ptr<THUMBNAIL_IMAGE> m_result;
+    std::shared_ptr<SHARED> m_shared;
+    std::vector<HANDLE> m_stoppedThreads;
 };
 
 #endif // INCLUDE_THUMBNAIL_GENERATOR_H

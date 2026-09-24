@@ -110,13 +110,13 @@ public:
     int GetGeneration() const { return m_generation; }
     bool IsUnsupported() const { return m_fUnsupported; }
     void Open(int generation, LPCTSTR path);
-    int Generate(const REQUEST &req, CThumbnailGenerator *pOwner, THUMBNAIL_IMAGE *pImage);
+    int Generate(const REQUEST &req, SHARED *pShared, THUMBNAIL_IMAGE *pImage);
 private:
     bool ReadAt(__int64 pos, int size, std::vector<BYTE> &buf);
     bool FindPcrAt(__int64 pos, DWORD *pPcr);
-    __int64 FindBytePosition(int msec, int durMsec, int serial, CThumbnailGenerator *pOwner);
+    __int64 FindBytePosition(int msec, int durMsec, int serial, SHARED *pShared);
     __int64 AlignToPacket(__int64 pos) const;
-    bool DecodeFrom(__int64 pos, int serial, CThumbnailGenerator *pOwner, bool *pfScrambled);
+    bool DecodeFrom(__int64 pos, int serial, SHARED *pShared, bool *pfScrambled);
     bool ReceiveFrame();
     bool Scale(int width, THUMBNAIL_IMAGE *pImage);
 
@@ -248,17 +248,17 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
 }
 
 // 戻り値は THUMBNAIL_IMAGE::status と同じ。打ち切られたときは負を返す
-int CThumbnailGenerator::CDecoder::Generate(const REQUEST &req, CThumbnailGenerator *pOwner, THUMBNAIL_IMAGE *pImage)
+int CThumbnailGenerator::CDecoder::Generate(const REQUEST &req, SHARED *pShared, THUMBNAIL_IMAGE *pImage)
 {
     if (m_fUnsupported) return 2;
     // 終端近くなどでその先にIピクチャがなければ少し手前からやり直す
     static const int RETRY_BACK_MSEC[] = {0, 5000, 15000};
     for (int back : RETRY_BACK_MSEC) {
         if (back > 0 && back > req.msec) break;
-        __int64 pos = FindBytePosition(req.msec - back, req.durMsec, req.serial, pOwner);
+        __int64 pos = FindBytePosition(req.msec - back, req.durMsec, req.serial, pShared);
         if (pos < 0) return pos == -2 ? -1 : 1;
         bool fScrambled = false;
-        if (DecodeFrom(pos, req.serial, pOwner, &fScrambled)) {
+        if (DecodeFrom(pos, req.serial, pShared, &fScrambled)) {
             return Scale(req.width, pImage) ? 0 : 1;
         }
         if (fScrambled) {
@@ -266,7 +266,7 @@ int CThumbnailGenerator::CDecoder::Generate(const REQUEST &req, CThumbnailGenera
             m_fUnsupported = true;
             return 2;
         }
-        if (pOwner->IsSuperseded(req.serial)) return -1;
+        if (pShared->IsSuperseded(req.serial)) return -1;
     }
     return 1;
 }
@@ -298,7 +298,7 @@ bool CThumbnailGenerator::CDecoder::FindPcrAt(__int64 pos, DWORD *pPcr)
 
 // 再生位置に対応するバイト位置をPCRを手がかりに探す
 // 失敗したときは-1、打ち切られたときは-2を返す
-__int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, int serial, CThumbnailGenerator *pOwner)
+__int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, int serial, SHARED *pShared)
 {
     __int64 size = m_file->GetSize();
     if (size <= 0 || durMsec <= 0) return -1;
@@ -319,7 +319,7 @@ __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, i
     int loMsec = 0, hiMsec = durMsec;
     __int64 pos = size * msec / durMsec;
     for (int i = 0; i < SEEK_TRIES_MAX; ++i) {
-        if (pOwner->IsSuperseded(serial)) return -2;
+        if (pShared->IsSuperseded(serial)) return -2;
         pos = AlignToPacket(pos);
         DWORD pcr;
         if (!FindPcrAt(pos, &pcr)) break;
@@ -348,7 +348,7 @@ __int64 CThumbnailGenerator::CDecoder::AlignToPacket(__int64 pos) const
     return pos < m_syncOffset ? m_syncOffset : pos - (pos - m_syncOffset) % m_unitSize;
 }
 
-bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbnailGenerator *pOwner, bool *pfScrambled)
+bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, SHARED *pShared, bool *pfScrambled)
 {
     avcodec_flush_buffers(m_codec);
     AVCodecParserContext *parser = av_parser_init(m_codecID);
@@ -364,7 +364,7 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
     // パケットの途中で区切ると境界のパケットが失われるので、パケット長の倍数ずつ読む
     int chunkSize = ES_READ_CHUNK / m_unitSize * m_unitSize;
     for (int readSize = 0; !fDone && readSize < ES_READ_MAX; readSize += chunkSize) {
-        if (pOwner->IsSuperseded(serial) || !ReadAt(pos + readSize, chunkSize, buf)) break;
+        if (pShared->IsSuperseded(serial) || !ReadAt(pos + readSize, chunkSize, buf)) break;
         CPacketIterator it(buf, m_unitSize);
         for (const BYTE *packet; !fDone && (packet = it.Next()) != nullptr;) {
             if (PidOf(packet) != m_videoPid) continue;
@@ -425,7 +425,7 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
             break;
         }
     }
-    if (!fDone && sentFromIntra > 0 && !*pfScrambled && !pOwner->IsSuperseded(serial)) {
+    if (!fDone && sentFromIntra > 0 && !*pfScrambled && !pShared->IsSuperseded(serial)) {
         // 読み切っても出てこなければ残りを吐き出させる
         if (avcodec_send_packet(m_codec, nullptr) >= 0) {
             fDone = ReceiveFrame();
@@ -466,83 +466,114 @@ bool CThumbnailGenerator::CDecoder::Scale(int width, THUMBNAIL_IMAGE *pImage)
 }
 
 
+CThumbnailGenerator::SHARED::SHARED()
+    : hEvent(nullptr)
+    , hwndNotify(nullptr)
+    , notifyMsg(0)
+    , fStop(false)
+    , serial(0)
+    , request()
+    , fRequested(false)
+{
+}
+
+CThumbnailGenerator::SHARED::~SHARED()
+{
+    if (hEvent) ::CloseHandle(hEvent);
+}
+
+bool CThumbnailGenerator::SHARED::IsSuperseded(int serial_)
+{
+    lock_recursive_mutex lock_(lock);
+    return fStop || (fRequested && request.serial != serial_);
+}
+
+
 CThumbnailGenerator::CThumbnailGenerator()
     : m_hThread(nullptr)
-    , m_hEvent(nullptr)
-    , m_hwndNotify(nullptr)
-    , m_notifyMsg(0)
-    , m_fStop(false)
-    , m_serial(0)
-    , m_request()
-    , m_fRequested(false)
 {
 }
 
 CThumbnailGenerator::~CThumbnailGenerator()
 {
-    Stop();
+    Stop(true);
 }
 
 bool CThumbnailGenerator::Start(HWND hwndNotify, UINT notifyMsg)
 {
     if (m_hThread) return true;
+    ReapStoppedThreads(false);
     // 途中からのデコードで出るエラーは想定内なので黙らせる
     av_log_set_level(AV_LOG_QUIET);
-    m_hwndNotify = hwndNotify;
-    m_notifyMsg = notifyMsg;
-    m_fStop = false;
-    m_fRequested = false;
-    m_hEvent = ::CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    if (!m_hEvent) return false;
-    m_hThread = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, 0, ThreadProc, this, 0, nullptr));
+    std::shared_ptr<SHARED> shared = std::make_shared<SHARED>();
+    shared->hEvent = ::CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (!shared->hEvent) return false;
+    shared->hwndNotify = hwndNotify;
+    shared->notifyMsg = notifyMsg;
+    // スレッドは自分の分の参照を持って始まる
+    std::shared_ptr<SHARED> *pParam = new std::shared_ptr<SHARED>(shared);
+    m_hThread = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, 0, ThreadProc, pParam, 0, nullptr));
     if (!m_hThread) {
-        ::CloseHandle(m_hEvent);
-        m_hEvent = nullptr;
+        delete pParam;
         return false;
     }
     // 再生を妨げないように
     ::SetThreadPriority(m_hThread, THREAD_PRIORITY_BELOW_NORMAL);
+    m_shared = shared;
     return true;
 }
 
-void CThumbnailGenerator::Stop()
+void CThumbnailGenerator::Stop(bool fWait)
 {
     if (m_hThread) {
         {
-            lock_recursive_mutex lock(m_lock);
-            m_fStop = true;
+            lock_recursive_mutex lock(m_shared->lock);
+            m_shared->fStop = true;
+            m_shared->result.reset();
         }
-        ::SetEvent(m_hEvent);
-        ::WaitForSingleObject(m_hThread, INFINITE);
-        ::CloseHandle(m_hThread);
+        ::SetEvent(m_shared->hEvent);
+        m_stoppedThreads.push_back(m_hThread);
         m_hThread = nullptr;
-        ::CloseHandle(m_hEvent);
-        m_hEvent = nullptr;
+        m_shared.reset();
     }
-    lock_recursive_mutex lock(m_lock);
-    m_result.reset();
+    ReapStoppedThreads(fWait);
+}
+
+// 止めたスレッドのうち終わったものを片づける。fWaitなら全部終わるまで待つ
+void CThumbnailGenerator::ReapStoppedThreads(bool fWait)
+{
+    for (std::vector<HANDLE>::iterator it = m_stoppedThreads.begin(); it != m_stoppedThreads.end();) {
+        if (::WaitForSingleObject(*it, fWait ? INFINITE : 0) == WAIT_OBJECT_0) {
+            ::CloseHandle(*it);
+            it = m_stoppedThreads.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
 }
 
 void CThumbnailGenerator::Request(int generation, LPCTSTR path, int msec, int durMsec, int width)
 {
     if (!m_hThread) return;
     {
-        lock_recursive_mutex lock(m_lock);
-        m_request.serial = ++m_serial;
-        m_request.generation = generation;
-        m_request.path = path;
-        m_request.msec = msec;
-        m_request.durMsec = durMsec;
-        m_request.width = width;
-        m_fRequested = true;
+        lock_recursive_mutex lock(m_shared->lock);
+        m_shared->request.serial = ++m_shared->serial;
+        m_shared->request.generation = generation;
+        m_shared->request.path = path;
+        m_shared->request.msec = msec;
+        m_shared->request.durMsec = durMsec;
+        m_shared->request.width = width;
+        m_shared->fRequested = true;
     }
-    ::SetEvent(m_hEvent);
+    ::SetEvent(m_shared->hEvent);
 }
 
 std::unique_ptr<THUMBNAIL_IMAGE> CThumbnailGenerator::TakeResult()
 {
-    lock_recursive_mutex lock(m_lock);
-    return std::move(m_result);
+    if (!m_shared) return nullptr;
+    lock_recursive_mutex lock(m_shared->lock);
+    return std::move(m_shared->result);
 }
 
 bool CThumbnailGenerator::IsSupportedFile(LPCTSTR path)
@@ -556,30 +587,25 @@ bool CThumbnailGenerator::IsSupportedFile(LPCTSTR path)
            ;
 }
 
-bool CThumbnailGenerator::IsSuperseded(int serial)
-{
-    lock_recursive_mutex lock(m_lock);
-    return m_fStop || (m_fRequested && m_request.serial != serial);
-}
-
 unsigned int __stdcall CThumbnailGenerator::ThreadProc(LPVOID pParam)
 {
-    static_cast<CThumbnailGenerator*>(pParam)->Run();
+    std::unique_ptr<std::shared_ptr<SHARED>> shared(static_cast<std::shared_ptr<SHARED>*>(pParam));
+    Run(**shared);
     return 0;
 }
 
-void CThumbnailGenerator::Run()
+void CThumbnailGenerator::Run(SHARED &shared)
 {
     CDecoder decoder;
     for (;;) {
-        ::WaitForSingleObject(m_hEvent, INFINITE);
+        ::WaitForSingleObject(shared.hEvent, INFINITE);
         REQUEST req;
         {
-            lock_recursive_mutex lock(m_lock);
-            if (m_fStop) break;
-            if (!m_fRequested) continue;
-            req = m_request;
-            m_fRequested = false;
+            lock_recursive_mutex lock(shared.lock);
+            if (shared.fStop) break;
+            if (!shared.fRequested) continue;
+            req = shared.request;
+            shared.fRequested = false;
         }
         if (decoder.GetGeneration() != req.generation) {
             decoder.Open(req.generation, req.path.c_str());
@@ -588,14 +614,14 @@ void CThumbnailGenerator::Run()
         image->generation = req.generation;
         image->msec = req.msec;
         image->width = image->height = 0;
-        image->status = decoder.Generate(req, this, image.get());
+        image->status = decoder.Generate(req, &shared, image.get());
         if (image->status < 0) continue;
         {
-            lock_recursive_mutex lock(m_lock);
-            if (m_fStop) break;
+            lock_recursive_mutex lock(shared.lock);
+            if (shared.fStop) break;
             // 受け取られる前に次の結果ができたら古いほうは捨てる
-            m_result = std::move(image);
+            shared.result = std::move(image);
         }
-        ::PostMessage(m_hwndNotify, m_notifyMsg, 0, 0);
+        ::PostMessage(shared.hwndNotify, shared.notifyMsg, 0, 0);
     }
 }

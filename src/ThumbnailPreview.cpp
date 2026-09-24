@@ -72,7 +72,8 @@ void CThumbnailPreview::Close()
 {
     Hide();
     // ファイルを開いたままにしないようにスレッドごと止める
-    m_generator.Stop();
+    // 再生するファイルの切り替えを遅らせないよう、生成中でも終わりを待たない
+    m_generator.Stop(false);
     m_path.clear();
     ++m_generation;
     m_step = 0;
@@ -150,6 +151,8 @@ void CThumbnailPreview::Hide()
 void CThumbnailPreview::Destroy()
 {
     Close();
+    // プラグインを無効にするときは、DLLが解放される前にすべてのスレッドを終わらせておく
+    m_generator.Stop(true);
     if (m_hwnd && ::IsWindow(m_hwnd)) ::DestroyWindow(m_hwnd);
     m_hwnd = nullptr;
     m_hwndOwner = nullptr;

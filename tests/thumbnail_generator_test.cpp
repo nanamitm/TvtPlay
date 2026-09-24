@@ -159,7 +159,30 @@ int wmain(int argc, wchar_t **argv)
         }
     }
 
-    generator.Stop();
+    // Stopping without waiting must return at once even in the middle of a
+    // generation, and a new worker must work while the old one finishes.
+    {
+        LPCWSTR path = argv[2];
+        int dur = GetDurationMsec(path);
+        generator.Request(100, path, dur / 2, dur, 160);
+        ::Sleep(30);
+        DWORD tick = ::GetTickCount();
+        generator.Stop(false);
+        DWORD elapsed = ::GetTickCount() - tick;
+        wprintf(L"stop without waiting: %lu ms\n", elapsed);
+        if (elapsed > 50) ++failures;
+        std::unique_ptr<THUMBNAIL_IMAGE> image;
+        if (generator.Start(hwnd, WM_RESULT)) {
+            generator.Request(101, path, dur / 4, dur, 160);
+            image = WaitResult(generator);
+        }
+        if (!image || image->generation != 101 || image->status != 0) {
+            wprintf(L"restart after stop: no thumbnail\n");
+            ++failures;
+        }
+    }
+
+    generator.Stop(true);
     ::DestroyWindow(hwnd);
     wprintf(failures ? L"FAILED (%d)\n" : L"OK\n", failures);
     return failures ? 1 : 0;
