@@ -3,6 +3,7 @@
 
 #include "ReadOnlyFile.h"
 #include "Util.h"
+#include <atomic>
 #include <list>
 
 class CBufferedFileReader
@@ -24,7 +25,7 @@ private:
     IReadOnlyFile *m_file;
     HANDLE m_hThread;
     HANDLE m_hThreadEvent;
-    bool m_fStop;
+    std::atomic<bool> m_fStop;
     bool m_fRead;
     std::list<std::vector<BYTE>> m_queue;
     std::list<std::vector<BYTE>>::iterator m_tail;

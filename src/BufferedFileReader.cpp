@@ -5,6 +5,7 @@
 CBufferedFileReader::CBufferedFileReader()
     : m_file(nullptr)
     , m_hThread(nullptr)
+    , m_fStop(false)
 {
 }
 
