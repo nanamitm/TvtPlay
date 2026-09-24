@@ -102,7 +102,13 @@ std::unique_ptr<THUMBNAIL_IMAGE> WaitResult(CThumbnailGenerator &generator)
 {
     MSG msg;
     while (::GetMessage(&msg, nullptr, 0, 0) > 0) {
-        if (msg.message == WM_RESULT) return generator.TakeResult();
+        if (msg.message == WM_RESULT) {
+            // A worker stopped just after posting leaves a notice with no result
+            // behind it, as CThumbnailPreview::OnResult also expects.
+            std::unique_ptr<THUMBNAIL_IMAGE> image = generator.TakeResult();
+            if (image) return image;
+            continue;
+        }
         ::DispatchMessage(&msg);
     }
     return nullptr;
