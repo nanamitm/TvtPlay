@@ -22,6 +22,7 @@ cl /nologo /std:c++17 /EHsc /MD /O2 /utf-8 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND
     "/Fo$outputDir\\" "/Fe$exe" `
     (Join-Path $PSScriptRoot 'thumbnail_generator_test.cpp') `
     (Join-Path $src 'ThumbnailGenerator.cpp') (Join-Path $src 'ReadOnlyFile.cpp') (Join-Path $src 'Util.cpp') `
+    (Join-Path $src 'ReadOnlyMpeg4File.cpp') (Join-Path $src 'PsiArchiveReader.cpp') (Join-Path $src 'B24CaptionUtil.cpp') `
     /link "/LIBPATH:$ffmpeg\lib" avcodec.lib swscale.lib avutil.lib bcrypt.lib ole32.lib user32.lib gdi32.lib advapi32.lib shlwapi.lib
 if ($LASTEXITCODE -ne 0) { throw 'Thumbnail generator test build failed' }
 & $exe $outputDir @TsFiles

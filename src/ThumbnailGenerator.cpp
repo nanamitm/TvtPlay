@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "Util.h"
 #include "ReadOnlyFile.h"
+#include "ReadOnlyMpeg4File.h"
 #include "ThumbnailGenerator.h"
 
 extern "C" {
@@ -98,7 +99,7 @@ class CThumbnailGenerator::CDecoder
 {
 public:
     CDecoder() : m_generation(-1), m_fUnsupported(false), m_unitSize(0), m_pcrPid(-1), m_videoPid(-1), m_initPcr(0)
-               , m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
+               , m_mpeg4File(nullptr), m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
     ~CDecoder() {
         sws_freeContext(m_sws);
         av_packet_free(&m_packet);
@@ -119,7 +120,9 @@ private:
 
     int m_generation;
     bool m_fUnsupported;
-    CReadOnlyLocalFile m_file;
+    std::unique_ptr<IReadOnlyFile> m_file;
+    // MP4はTSに変換しながら読み、時刻からバイト位置を直接求められる
+    CReadOnlyMpeg4File *m_mpeg4File;
     int m_unitSize;
     int m_pcrPid;
     int m_videoPid;
@@ -135,10 +138,19 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
 {
     m_generation = generation;
     m_fUnsupported = true;
-    m_file.Close();
+    m_file.reset();
+    m_mpeg4File = nullptr;
     const char *errorMessage = nullptr;
-    // 録画中のファイルも開けるように書き込み共有する
-    if (!m_file.Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL | IReadOnlyFile::OPEN_FLAG_SHARE_WRITE, errorMessage)) return;
+    if (!_tcsicmp(::PathFindExtension(path), TEXT(".mp4"))) {
+        m_mpeg4File = new CReadOnlyMpeg4File();
+        m_file.reset(m_mpeg4File);
+        if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) return;
+    }
+    else {
+        m_file.reset(new CReadOnlyLocalFile());
+        // 録画中のファイルも開けるように書き込み共有する
+        if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL | IReadOnlyFile::OPEN_FLAG_SHARE_WRITE, errorMessage)) return;
+    }
 
     std::vector<BYTE> head;
     if (!ReadAt(0, HEAD_READ_SIZE, head)) return;
@@ -211,27 +223,33 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
 int CThumbnailGenerator::CDecoder::Generate(const REQUEST &req, CThumbnailGenerator *pOwner, THUMBNAIL_IMAGE *pImage)
 {
     if (m_fUnsupported) return 2;
-    __int64 pos = FindBytePosition(req.msec, req.durMsec, req.serial, pOwner);
-    if (pos < 0) return pos == -2 ? -1 : 1;
-    bool fScrambled = false;
-    if (!DecodeFrom(pos, req.serial, pOwner, &fScrambled)) {
+    // 終端近くなどでその先にIピクチャがなければ少し手前からやり直す
+    static const int RETRY_BACK_MSEC[] = {0, 5000, 15000};
+    for (int back : RETRY_BACK_MSEC) {
+        if (back > 0 && back > req.msec) break;
+        __int64 pos = FindBytePosition(req.msec - back, req.durMsec, req.serial, pOwner);
+        if (pos < 0) return pos == -2 ? -1 : 1;
+        bool fScrambled = false;
+        if (DecodeFrom(pos, req.serial, pOwner, &fScrambled)) {
+            return Scale(req.width, pImage) ? 0 : 1;
+        }
         if (fScrambled) {
             // 復号されていないファイルは対象外
             m_fUnsupported = true;
             return 2;
         }
-        return pOwner->IsSuperseded(req.serial) ? -1 : 1;
+        if (pOwner->IsSuperseded(req.serial)) return -1;
     }
-    return Scale(req.width, pImage) ? 0 : 1;
+    return 1;
 }
 
 bool CThumbnailGenerator::CDecoder::ReadAt(__int64 pos, int size, std::vector<BYTE> &buf)
 {
     buf.resize(size);
-    if (m_file.SetPointer(pos, IReadOnlyFile::MOVE_METHOD_BEGIN) < 0) return false;
+    if (m_file->SetPointer(pos, IReadOnlyFile::MOVE_METHOD_BEGIN) < 0) return false;
     int total = 0;
     while (total < size) {
-        int n = m_file.Read(buf.data() + total, size - total);
+        int n = m_file->Read(buf.data() + total, size - total);
         if (n <= 0) break;
         total += n;
     }
@@ -254,10 +272,14 @@ bool CThumbnailGenerator::CDecoder::FindPcrAt(__int64 pos, DWORD *pPcr)
 // 失敗したときは-1、打ち切られたときは-2を返す
 __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, int serial, CThumbnailGenerator *pOwner)
 {
-    __int64 size = m_file.GetSize();
+    __int64 size = m_file->GetSize();
     if (size <= 0 || durMsec <= 0) return -1;
     // 終端付近ではIピクチャが見つからないことがある
     msec = min(max(msec, 0), max(durMsec - 2000, 0));
+    if (m_mpeg4File) {
+        __int64 pos = m_mpeg4File->GetPositionBytesFromMsec(msec);
+        return pos < 0 ? -1 : pos;
+    }
 
     __int64 loPos = 0, hiPos = size;
     int loMsec = 0, hiMsec = durMsec;
@@ -293,6 +315,8 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
 
     bool fDone = false;
     bool fStarted = false;
+    // 最初のIピクチャから送った数。それまでのピクチャは表示できないので送らない
+    int sentFromIntra = 0;
     int scrambledCount = 0;
     int clearCount = 0;
     std::vector<BYTE> buf;
@@ -329,11 +353,21 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
                 if (n < 0) break;
                 payload += n;
                 size -= n;
-                if (dataSize > 0) {
-                    m_packet->data = data;
-                    m_packet->size = dataSize;
-                    if (avcodec_send_packet(m_codec, m_packet) >= 0) {
+                if (dataSize <= 0 || (sentFromIntra == 0 && parser->pict_type != AV_PICTURE_TYPE_I)) continue;
+                m_packet->data = data;
+                m_packet->size = dataSize;
+                if (avcodec_send_packet(m_codec, m_packet) >= 0) {
+                    fDone = ReceiveFrame();
+                }
+                // フィールド符号化ならIとPの組で1枚になるので、もう1つ送ってから吐き出させる
+                if (!fDone && ++sentFromIntra >= 2) {
+                    if (avcodec_send_packet(m_codec, nullptr) >= 0) {
                         fDone = ReceiveFrame();
+                    }
+                    if (!fDone) {
+                        // 参照するパラメータがまだないなど。次のIピクチャを待つ
+                        avcodec_flush_buffers(m_codec);
+                        sentFromIntra = 0;
                     }
                 }
             }
@@ -343,7 +377,7 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
             break;
         }
     }
-    if (!fDone && !*pfScrambled && !pOwner->IsSuperseded(serial)) {
+    if (!fDone && sentFromIntra > 0 && !*pfScrambled && !pOwner->IsSuperseded(serial)) {
         // 読み切っても出てこなければ残りを吐き出させる
         if (avcodec_send_packet(m_codec, nullptr) >= 0) {
             fDone = ReceiveFrame();
@@ -466,7 +500,8 @@ std::unique_ptr<THUMBNAIL_IMAGE> CThumbnailGenerator::TakeResult()
 bool CThumbnailGenerator::IsSupportedFile(LPCTSTR path)
 {
     LPCTSTR ext = ::PathFindExtension(path);
-    return !_tcsicmp(ext, TEXT(".ts")) || !_tcsicmp(ext, TEXT(".m2t")) || !_tcsicmp(ext, TEXT(".m2ts"));
+    return !_tcsicmp(ext, TEXT(".ts")) || !_tcsicmp(ext, TEXT(".m2t")) || !_tcsicmp(ext, TEXT(".m2ts")) ||
+           !_tcsicmp(ext, TEXT(".mp4"));
 }
 
 bool CThumbnailGenerator::IsSuperseded(int serial)

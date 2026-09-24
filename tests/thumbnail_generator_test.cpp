@@ -7,16 +7,28 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <Shlwapi.h>
 #include "../src/Util.h"
+#include "../src/ReadOnlyMpeg4File.h"
 #include "../src/ThumbnailGenerator.h"
+
+// The MP4 reader looks for TvtPlay.ini next to this module.
+HINSTANCE g_hinstDLL = nullptr;
 
 namespace
 {
 const UINT WM_RESULT = WM_APP + 1;
 
 // The last PCR of the file gives the duration, as CTsSender measures it.
+// An MP4 file is measured by its reader, whose TS output is timed in 100 ms blocks.
 int GetDurationMsec(LPCWSTR path)
 {
+    if (!_wcsicmp(::PathFindExtensionW(path), L".mp4")) {
+        CReadOnlyMpeg4File file;
+        const char *errorMessage = nullptr;
+        if (!file.Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) return -1;
+        return file.GetPositionMsecFromBytes(file.GetSize());
+    }
     HANDLE hFile = ::CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return -1;
     LARGE_INTEGER size;

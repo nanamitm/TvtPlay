@@ -69,9 +69,9 @@ Thumbnails are decoded on a background thread from the file itself, so they
 work for positions that have not been played yet, and recently shown ones are
 kept in memory.
 
-This version covers **decrypted `.ts`, `.m2t` and `.m2ts` files with MPEG-2
-or H.264 video** only. Nothing is shown for encrypted recordings, HEVC video,
-`.mp4`, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
+This version covers **decrypted `.ts`, `.m2t` and `.m2ts` files and `.mp4`
+files with MPEG-2 or H.264 video** only. Nothing is shown for encrypted
+recordings, HEVC video, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
 section of `TvtPlay.ini`:
 
 | Key | Default | Meaning |
