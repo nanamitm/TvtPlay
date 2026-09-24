@@ -2839,7 +2839,7 @@ unsigned int __stdcall CTvtPlay::TsSenderThread(LPVOID pParam)
                 msgSetSpeed.message = WM_NULL;
                 rv = TRUE;
             }
-            else if (::GetTickCount() - msg.time > 10000) {
+            else if (::GetTickCount() - msgSetSpeed.time > 10000) {
                 msgSetSpeed.message = WM_NULL;
             }
         }
