@@ -31,7 +31,7 @@ jobs:
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('src/thirdparty/build-ffmpeg.ps1') }}
 
       - name: Install MSYS2 build tools for FFmpeg
-        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed make diffutils
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed make diffutils nasm
 
       - name: Build TvtPlay
         run: >

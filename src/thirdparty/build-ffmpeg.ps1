@@ -5,8 +5,12 @@
 # is installed into thirdparty\ffmpeg\{include,lib}; a stamp file there records
 # the version and options so the build is skipped while they are unchanged.
 #
+# The SIMD assembly is built, as without it an 8K HEVC picture takes about a
+# second to decode.
+#
 # Requirements: Visual Studio with the x64 C++ tools, and MSYS2 (make, diffutils,
-# tar, xz, curl) at C:\msys64 or at $env:MSYS2_ROOT.
+# tar, xz, curl, and nasm from either the msys or the mingw64 package) at
+# C:\msys64 or at $env:MSYS2_ROOT.
 
 param(
     [switch]$Force
@@ -27,7 +31,6 @@ $ConfigureOptions = @(
     '--disable-debug'
     '--disable-network'
     '--disable-autodetect'
-    '--disable-x86asm'
     '--disable-everything'
     '--disable-avformat'
     '--disable-avdevice'
@@ -97,6 +100,10 @@ $prefixMsys = ConvertTo-MsysPath $prefix
 $options = ($ConfigureOptions | ForEach-Object { "'$_'" }) -join ' '
 $script = @"
 set -e
+# Last on PATH, so the mingw64 package's nasm is found without its other tools
+# shadowing the MSVC and MSYS2 ones.
+export PATH="`$PATH:/mingw64/bin"
+command -v nasm >/dev/null || { echo 'nasm was not found in MSYS2: pacman -S nasm' >&2; exit 1; }
 cd '$workMsys'
 rm -rf 'ffmpeg-$Version' '$prefixMsys'
 tar -xJf 'ffmpeg-$Version.tar.xz'

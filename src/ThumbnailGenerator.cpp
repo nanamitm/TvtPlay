@@ -230,6 +230,8 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
         if (!m_codec || !m_frame || !m_packet) return;
         // 参照されないピクチャは表示に使わないので省く
         m_codec->skip_frame = AVDISCARD_NONREF;
+        // 縮小すれば見えないので、デブロッキングとSAOを省いて速くする
+        m_codec->skip_loop_filter = AVDISCARD_ALL;
         m_codec->thread_count = 1;
         if (avcodec_open2(m_codec, codec, nullptr) < 0) {
             avcodec_free_context(&m_codec);

@@ -74,7 +74,7 @@ and `.mp4` with MPEG-2, H.264 or HEVC video, and `.mmts` and `.mmtsedit`.
 An `.mmtsedit` shows its edited timeline. Only **decrypted** recordings are
 covered: nothing is shown for an encrypted TS, and MMTS thumbnails never use
 the smart card or CasProxy set up for playback. A 4K picture takes about
-0.2-0.3 seconds and an 8K one close to a second.
+0.1-0.2 seconds and an 8K one about 0.3-0.5 seconds.
 
 The settings, in the `[Settings]` section of `TvtPlay.ini`:
 
@@ -124,8 +124,9 @@ The pre-build step also runs `src/thirdparty/build-ffmpeg.ps1`, which downloads
 the pinned FFmpeg source release (checked by SHA-256), builds the minimal static
 libraries with the MSVC tools, and installs them into `src/thirdparty/ffmpeg`.
 It does nothing once they are up to date. The first build needs
-[MSYS2](https://www.msys2.org/) with `make` and `diffutils`
-(`pacman -S make diffutils`) at `C:\msys64`, or at the path in `MSYS2_ROOT`.
+[MSYS2](https://www.msys2.org/) with `make`, `diffutils` and `nasm`
+(`pacman -S make diffutils nasm`; `mingw-w64-x86_64-nasm` also works) at
+`C:\msys64`, or at the path in `MSYS2_ROOT`. NASM builds FFmpeg's SIMD code.
 
 FFmpeg is licensed under the LGPL 2.1 or later. Release packages include its
 licence as `FFmpeg_COPYING.LGPLv2.1.txt`; the FFmpeg source is available from
