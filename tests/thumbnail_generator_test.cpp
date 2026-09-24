@@ -1,6 +1,6 @@
-// Generates thumbnails from a real TS file through CThumbnailGenerator and
+// Generates thumbnails from real TS files through CThumbnailGenerator and
 // writes them as BMP files, so the seek and decode path can be checked by eye.
-// Usage: thumbnail_generator_test.exe <file.ts> <output dir>
+// Usage: thumbnail_generator_test.exe <output dir> <file.ts>...
 #include <Windows.h>
 #include <tchar.h>
 #include <cstdio>
@@ -91,46 +91,51 @@ std::unique_ptr<THUMBNAIL_IMAGE> WaitResult(CThumbnailGenerator &generator)
 int wmain(int argc, wchar_t **argv)
 {
     if (argc < 3) {
-        fwprintf(stderr, L"usage: %s <file.ts> <output dir>\n", argv[0]);
+        fwprintf(stderr, L"usage: %s <output dir> <file.ts>...\n", argv[0]);
         return 2;
     }
-    int dur = GetDurationMsec(argv[1]);
-    if (dur <= 0) {
-        fwprintf(stderr, L"cannot measure the duration\n");
-        return 1;
-    }
-    wprintf(L"duration: %d ms\n", dur);
-
     HWND hwnd = ::CreateWindowW(L"STATIC", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
     CThumbnailGenerator generator;
     if (!hwnd || !generator.Start(hwnd, WM_RESULT)) return 1;
 
+    // Each file is a new generation on the same worker, as when a playlist
+    // moves on, so the decoder has to follow a change of video format.
     int failures = 0;
-    const int percents[] = {0, 10, 25, 50, 75, 90, 100};
-    for (int percent : percents) {
-        int msec = static_cast<int>(static_cast<long long>(dur) * percent / 100);
-        DWORD tick = ::GetTickCount();
-        generator.Request(1, argv[1], msec, dur, 160);
-        std::unique_ptr<THUMBNAIL_IMAGE> image = WaitResult(generator);
-        DWORD elapsed = ::GetTickCount() - tick;
-        if (!image || image->status != 0) {
-            wprintf(L"%3d%% (%d ms): status %d, %lu ms\n", percent, msec, image ? image->status : -1, elapsed);
+    for (int fileIndex = 2; fileIndex < argc; ++fileIndex) {
+        LPCWSTR path = argv[fileIndex];
+        int generation = fileIndex;
+        int dur = GetDurationMsec(path);
+        wprintf(L"%s\nduration: %d ms\n", path, dur);
+        if (dur <= 0) {
             ++failures;
             continue;
         }
-        wchar_t out[MAX_PATH];
-        swprintf_s(out, L"%s\\thumb_%03d.bmp", argv[2], percent);
-        WriteBmp(out, *image);
-        wprintf(L"%3d%% (%d ms): %dx%d, %lu ms -> %s\n", percent, msec, image->width, image->height, elapsed, out);
-    }
+        const int percents[] = {0, 10, 25, 50, 75, 90, 100};
+        for (int percent : percents) {
+            int msec = static_cast<int>(static_cast<long long>(dur) * percent / 100);
+            DWORD tick = ::GetTickCount();
+            generator.Request(generation, path, msec, dur, 160);
+            std::unique_ptr<THUMBNAIL_IMAGE> image = WaitResult(generator);
+            DWORD elapsed = ::GetTickCount() - tick;
+            if (!image || image->status != 0) {
+                wprintf(L"%3d%% (%d ms): status %d, %lu ms\n", percent, msec, image ? image->status : -1, elapsed);
+                ++failures;
+                continue;
+            }
+            wchar_t out[MAX_PATH];
+            swprintf_s(out, L"%s\\thumb_%d_%03d.bmp", argv[1], fileIndex - 1, percent);
+            WriteBmp(out, *image);
+            wprintf(L"%3d%% (%d ms): %dx%d, %lu ms -> %s\n", percent, msec, image->width, image->height, elapsed, out);
+        }
 
-    // A newer request must cancel the one being worked on; only the last result arrives.
-    generator.Request(1, argv[1], dur / 3, dur, 160);
-    generator.Request(1, argv[1], dur / 2, dur, 160);
-    std::unique_ptr<THUMBNAIL_IMAGE> image = WaitResult(generator);
-    if (!image || image->msec != dur / 2) {
-        wprintf(L"superseding: expected %d, got %d\n", dur / 2, image ? image->msec : -1);
-        ++failures;
+        // A newer request must cancel the one being worked on; only the last result arrives.
+        generator.Request(generation, path, dur / 3, dur, 160);
+        generator.Request(generation, path, dur / 2, dur, 160);
+        std::unique_ptr<THUMBNAIL_IMAGE> image = WaitResult(generator);
+        if (!image || image->msec != dur / 2) {
+            wprintf(L"superseding: expected %d, got %d\n", dur / 2, image ? image->msec : -1);
+            ++failures;
+        }
     }
 
     generator.Stop();

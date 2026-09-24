@@ -1,6 +1,6 @@
-# Builds the thumbnail generator against the static FFmpeg and runs it on a TS file.
-# Usage: run-thumbnail-generator.ps1 <file.ts>
-param([Parameter(Mandatory)][string]$TsFile)
+# Builds the thumbnail generator against the static FFmpeg and runs it on TS files.
+# Usage: run-thumbnail-generator.ps1 <file.ts> [<file.ts>...]
+param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$TsFiles)
 $ErrorActionPreference = 'Stop'
 $src = Join-Path $PSScriptRoot '..\src'
 & (Join-Path $src 'thirdparty\build-ffmpeg.ps1')
@@ -24,5 +24,5 @@ cl /nologo /std:c++17 /EHsc /MD /O2 /utf-8 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND
     (Join-Path $src 'ThumbnailGenerator.cpp') (Join-Path $src 'ReadOnlyFile.cpp') (Join-Path $src 'Util.cpp') `
     /link "/LIBPATH:$ffmpeg\lib" avcodec.lib swscale.lib avutil.lib bcrypt.lib ole32.lib user32.lib gdi32.lib advapi32.lib shlwapi.lib
 if ($LASTEXITCODE -ne 0) { throw 'Thumbnail generator test build failed' }
-& $exe $TsFile $outputDir
+& $exe $outputDir @TsFiles
 if ($LASTEXITCODE -ne 0) { throw 'Thumbnail generator test failed' }

@@ -98,7 +98,7 @@ class CThumbnailGenerator::CDecoder
 {
 public:
     CDecoder() : m_generation(-1), m_fUnsupported(false), m_unitSize(0), m_pcrPid(-1), m_videoPid(-1), m_initPcr(0)
-               , m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
+               , m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
     ~CDecoder() {
         sws_freeContext(m_sws);
         av_packet_free(&m_packet);
@@ -124,6 +124,7 @@ private:
     int m_pcrPid;
     int m_videoPid;
     DWORD m_initPcr;
+    AVCodecID m_codecID;
     AVCodecContext *m_codec;
     AVFrame *m_frame;
     AVPacket *m_packet;
@@ -172,8 +173,10 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
             j += 5 + ((section[j+3] & 0x0f) << 8 | section[j+4]);
         }
     }
-    // 今のところMPEG-2映像のみ
-    if (videoType != H_262_VIDEO) return;
+    // 今のところMPEG-2とH.264のみ
+    m_codecID = videoType == H_262_VIDEO ? AV_CODEC_ID_MPEG2VIDEO :
+                videoType == AVC_VIDEO ? AV_CODEC_ID_H264 : AV_CODEC_ID_NONE;
+    if (m_codecID == AV_CODEC_ID_NONE) return;
 
     bool fPcr = false;
     CPacketIterator it(head, m_unitSize);
@@ -182,14 +185,18 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
     }
     if (!fPcr) return;
 
+    if (m_codec && m_codec->codec_id != m_codecID) {
+        // 前のファイルと映像の方式が違う
+        avcodec_free_context(&m_codec);
+    }
     if (!m_codec) {
-        const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_MPEG2VIDEO);
+        const AVCodec *codec = avcodec_find_decoder(m_codecID);
         if (!codec) return;
         m_codec = avcodec_alloc_context3(codec);
-        m_frame = av_frame_alloc();
-        m_packet = av_packet_alloc();
+        if (!m_frame) m_frame = av_frame_alloc();
+        if (!m_packet) m_packet = av_packet_alloc();
         if (!m_codec || !m_frame || !m_packet) return;
-        // Bピクチャは表示に使わないので省く
+        // 参照されないピクチャは表示に使わないので省く
         m_codec->skip_frame = AVDISCARD_NONREF;
         m_codec->thread_count = 1;
         if (avcodec_open2(m_codec, codec, nullptr) < 0) {
@@ -281,7 +288,7 @@ __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, i
 bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbnailGenerator *pOwner, bool *pfScrambled)
 {
     avcodec_flush_buffers(m_codec);
-    AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_MPEG2VIDEO);
+    AVCodecParserContext *parser = av_parser_init(m_codecID);
     if (!parser) return false;
 
     bool fDone = false;

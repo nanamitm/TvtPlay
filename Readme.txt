@@ -69,9 +69,9 @@ Thumbnails are decoded on a background thread from the file itself, so they
 work for positions that have not been played yet, and recently shown ones are
 kept in memory.
 
-This first version covers **decrypted `.ts`, `.m2t` and `.m2ts` files with
-MPEG-2 video** only. Nothing is shown for encrypted recordings, H.264/HEVC
-video, `.mp4`, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
+This version covers **decrypted `.ts`, `.m2t` and `.m2ts` files with MPEG-2
+or H.264 video** only. Nothing is shown for encrypted recordings, HEVC video,
+`.mp4`, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
 section of `TvtPlay.ini`:
 
 | Key | Default | Meaning |
@@ -81,7 +81,7 @@ section of `TvtPlay.ini`:
 | `ThumbnailCacheMax` | `128` | Number of thumbnails kept in memory |
 
 Decoding uses FFmpeg (libavcodec, libswscale and libavutil), statically
-linked and built LGPL-only with just the MPEG-2 video decoder. See
+linked and built LGPL-only with just the MPEG-2 and H.264 video decoders. See
 [FFmpeg](#ffmpeg) under Building.
 
 ### Recorded EIT handling

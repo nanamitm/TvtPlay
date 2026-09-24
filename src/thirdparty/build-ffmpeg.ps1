@@ -1,9 +1,9 @@
 # Builds the minimal static FFmpeg that TvtPlay links for seek-bar thumbnails.
 #
-# Only libavcodec (with the MPEG-2 video decoder), libswscale and libavutil are
-# built, LGPL-only, with MSVC and the /MD runtime. The result is installed into
-# thirdparty\ffmpeg\{include,lib}; a stamp file there records the version and
-# options so the build is skipped while they are unchanged.
+# Only libavcodec (with the MPEG-2 and H.264 video decoders), libswscale and
+# libavutil are built, LGPL-only, with MSVC and the /MD runtime. The result is
+# installed into thirdparty\ffmpeg\{include,lib}; a stamp file there records
+# the version and options so the build is skipped while they are unchanged.
 #
 # Requirements: Visual Studio with the x64 C++ tools, and MSYS2 (make, diffutils,
 # tar, xz, curl) at C:\msys64 or at $env:MSYS2_ROOT.
@@ -33,8 +33,8 @@ $ConfigureOptions = @(
     '--disable-avdevice'
     '--disable-avfilter'
     '--disable-swresample'
-    '--enable-decoder=mpeg2video'
-    '--enable-parser=mpegvideo'
+    '--enable-decoder=mpeg2video,h264'
+    '--enable-parser=mpegvideo,h264'
     '--enable-swscale'
     '--extra-cflags=-MD'
 )
