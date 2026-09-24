@@ -69,11 +69,14 @@ Thumbnails are decoded on a background thread from the file itself, so they
 work for positions that have not been played yet, and recently shown ones are
 kept in memory.
 
-This version covers **decrypted `.ts`, `.m2t` and `.m2ts` files and `.mp4`
-files with MPEG-2, H.264 or HEVC video** only, including TS converted from
-MMTS by dantto4k. Nothing is shown for encrypted recordings, `.mmts` or
-`.mmtsedit`. The settings, in the `[Settings]`
-section of `TvtPlay.ini`:
+Thumbnails are shown for every format TvtPlay plays: `.ts`, `.m2t`, `.m2ts`
+and `.mp4` with MPEG-2, H.264 or HEVC video, and `.mmts` and `.mmtsedit`.
+An `.mmtsedit` shows its edited timeline. Only **decrypted** recordings are
+covered: nothing is shown for an encrypted TS, and MMTS thumbnails never use
+the smart card or CasProxy set up for playback. A 4K picture takes about
+0.2-0.3 seconds and an 8K one close to a second.
+
+The settings, in the `[Settings]` section of `TvtPlay.ini`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -130,8 +133,9 @@ licence as `FFmpeg_COPYING.LGPLv2.1.txt`; the FFmpeg source is available from
 in `build-ffmpeg.ps1`. Because TvtPlay's own source is public, it can be rebuilt
 and relinked against a modified FFmpeg.
 
-`tests/run-thumbnail-generator.ps1 <file.ts>` builds the thumbnail generator on
-its own and writes thumbnails at several positions of a TS file as BMP files.
+`tests/run-thumbnail-generator.ps1 <file>...` builds the plugin, links the
+thumbnail generator test against its objects, and writes thumbnails at several
+positions of each media file as BMP files.
 
 ## Further documentation
 

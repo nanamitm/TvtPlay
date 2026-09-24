@@ -32,6 +32,7 @@ struct Mmt4kConverter::Impl { BYTE marker{}; bool complete{}; };
 Mmt4kConverter::Mmt4kConverter() : m_impl(std::make_unique<Impl>()) {}
 Mmt4kConverter::~Mmt4kConverter() = default;
 bool Mmt4kConverter::Init(const std::string &, const std::string &, const std::string &, bool, bool) { return true; }
+void Mmt4kConverter::InitWithoutCas() {}
 void Mmt4kConverter::Push(const uint8_t *p, size_t) { m_impl->marker = *p; m_impl->complete = true; }
 std::vector<uint8_t> Mmt4kConverter::TakeOutput() {
     return emptyFirst && m_impl->marker == 1 ? std::vector<uint8_t>() : std::vector<uint8_t>(188, m_impl->marker);

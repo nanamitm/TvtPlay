@@ -23,6 +23,10 @@ public:
     bool Init(const std::string &smartCardReaderName, const std::string &casProxyServer,
               const std::string &customWinscardDLL, bool convertResolutionGaiji,
               bool useSmartCard);
+    // For a second converter beside playback, such as the seek-bar thumbnails:
+    // like Init() with the smart card off, but it leaves dantto4k's global
+    // config alone, which the playback converter reads while it demuxes.
+    void InitWithoutCas();
     void Push(const uint8_t *data, size_t size);
     std::vector<uint8_t> TakeOutput();
     void Reset();

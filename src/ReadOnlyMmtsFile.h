@@ -27,6 +27,9 @@ public:
 
     int GetDurationMsec() const { return m_durationMsec; }
     bool SeekToMsec(int msec);
+    // Call before Open() for a reader that runs beside playback: no CAS is
+    // attached and dantto4k's global config is left as playback set it.
+    void DisableCas() { m_disableCas = true; }
 
 private:
     struct MapPoint { __int64 timeMsec; __int64 offset; };
@@ -61,6 +64,7 @@ private:
     int m_editCurrentSegment{-1};
     bool m_eof{};
     bool m_started{};
+    bool m_disableCas{};
 };
 
 #endif // ENABLE_MMT4K

@@ -5,6 +5,7 @@
 #include "Util.h"
 #include "ReadOnlyFile.h"
 #include "ReadOnlyMpeg4File.h"
+#include "ReadOnlyMmtsFile.h"
 #include "ThumbnailGenerator.h"
 
 extern "C" {
@@ -99,7 +100,7 @@ class CThumbnailGenerator::CDecoder
 {
 public:
     CDecoder() : m_generation(-1), m_fUnsupported(false), m_unitSize(0), m_pcrPid(-1), m_videoPid(-1), m_initPcr(0)
-               , m_mpeg4File(nullptr), m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
+               , m_mpeg4File(nullptr), m_mmtsFile(nullptr), m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
     ~CDecoder() {
         sws_freeContext(m_sws);
         av_packet_free(&m_packet);
@@ -123,6 +124,12 @@ private:
     std::unique_ptr<IReadOnlyFile> m_file;
     // MP4はTSに変換しながら読み、時刻からバイト位置を直接求められる
     CReadOnlyMpeg4File *m_mpeg4File;
+    // MMTSはシークするとその時刻の直前のRAPからTSへの変換をやり直し、そこからしか読めない
+#ifdef ENABLE_MMT4K
+    CReadOnlyMmtsFile *m_mmtsFile;
+#else
+    void *m_mmtsFile;
+#endif
     int m_unitSize;
     int m_pcrPid;
     int m_videoPid;
@@ -140,12 +147,25 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
     m_fUnsupported = true;
     m_file.reset();
     m_mpeg4File = nullptr;
+    m_mmtsFile = nullptr;
     const char *errorMessage = nullptr;
-    if (!_tcsicmp(::PathFindExtension(path), TEXT(".mp4"))) {
+    LPCTSTR ext = ::PathFindExtension(path);
+    if (!_tcsicmp(ext, TEXT(".mp4"))) {
         m_mpeg4File = new CReadOnlyMpeg4File();
         m_file.reset(m_mpeg4File);
         if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) return;
     }
+#ifdef ENABLE_MMT4K
+    else if (!_tcsicmp(ext, TEXT(".mmts")) || !_tcsicmp(ext, TEXT(".mmtsedit"))) {
+        m_mmtsFile = new CReadOnlyMmtsFile();
+        m_file.reset(m_mmtsFile);
+        // 再生中の変換と並んで動くので、カードリーダーやCasProxyには触れない
+        m_mmtsFile->DisableCas();
+        // 再生と同じく、リモートのファイルは書き込み共有でないと開けない
+        if (!m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage) &&
+            !m_file->Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL | IReadOnlyFile::OPEN_FLAG_SHARE_WRITE, errorMessage)) return;
+    }
+#endif
     else {
         m_file.reset(new CReadOnlyLocalFile());
         // 録画中のファイルも開けるように書き込み共有する
@@ -280,6 +300,12 @@ __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, i
         __int64 pos = m_mpeg4File->GetPositionBytesFromMsec(msec);
         return pos < 0 ? -1 : pos;
     }
+#ifdef ENABLE_MMT4K
+    if (m_mmtsFile) {
+        // バイト位置は変換をやり直した先頭からの相対値になる
+        return m_mmtsFile->SeekToMsec(msec) ? 0 : -1;
+    }
+#endif
 
     __int64 loPos = 0, hiPos = size;
     int loMsec = 0, hiMsec = durMsec;
@@ -508,7 +534,11 @@ bool CThumbnailGenerator::IsSupportedFile(LPCTSTR path)
 {
     LPCTSTR ext = ::PathFindExtension(path);
     return !_tcsicmp(ext, TEXT(".ts")) || !_tcsicmp(ext, TEXT(".m2t")) || !_tcsicmp(ext, TEXT(".m2ts")) ||
-           !_tcsicmp(ext, TEXT(".mp4"));
+           !_tcsicmp(ext, TEXT(".mp4"))
+#ifdef ENABLE_MMT4K
+           || !_tcsicmp(ext, TEXT(".mmts")) || !_tcsicmp(ext, TEXT(".mmtsedit"))
+#endif
+           ;
 }
 
 bool CThumbnailGenerator::IsSuperseded(int serial)

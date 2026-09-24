@@ -101,6 +101,11 @@ struct Mmt4kConverter::Impl
 Mmt4kConverter::Mmt4kConverter() : m_impl(std::make_unique<Impl>()) {}
 Mmt4kConverter::~Mmt4kConverter() = default;
 
+void Mmt4kConverter::InitWithoutCas()
+{
+    m_impl->demuxer.setAssumeDescrambled(true);
+}
+
 bool Mmt4kConverter::Init(const std::string &smartCardReaderName, const std::string &casProxyServer,
                            const std::string &customWinscardDLL, bool convertResolutionGaiji,
                            bool useSmartCard)

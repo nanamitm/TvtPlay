@@ -410,7 +410,10 @@ bool CReadOnlyMmtsFile::Open(LPCTSTR path, int flags, const char *&errorMessage)
         Close(); return false;
     }
     m_converter = std::make_unique<Mmt4kConverter>();
-    if (!m_converter->Init(readerName, proxyServer, winscardDll, convertResolutionGaiji, useSmartCard)) {
+    if (m_disableCas) {
+        m_converter->InitWithoutCas();
+    }
+    else if (!m_converter->Init(readerName, proxyServer, winscardDll, convertResolutionGaiji, useSmartCard)) {
         errorMessage = "CReadOnlyMmtsFile: Cannot initialize dantto4k";
         Close(); return false;
     }

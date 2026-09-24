@@ -10,9 +10,10 @@
 #include <Shlwapi.h>
 #include "../src/Util.h"
 #include "../src/ReadOnlyMpeg4File.h"
+#include "../src/ReadOnlyMmtsFile.h"
 #include "../src/ThumbnailGenerator.h"
 
-// The MP4 reader looks for TvtPlay.ini next to this module.
+// The MP4 and MMTS readers look for their .ini next to this module.
 HINSTANCE g_hinstDLL = nullptr;
 
 namespace
@@ -28,6 +29,14 @@ int GetDurationMsec(LPCWSTR path)
         const char *errorMessage = nullptr;
         if (!file.Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) return -1;
         return file.GetPositionMsecFromBytes(file.GetSize());
+    }
+    // An MMTS or .mmtsedit file is measured by its .mmtsmap or edit timeline.
+    if (!_wcsicmp(::PathFindExtensionW(path), L".mmts") || !_wcsicmp(::PathFindExtensionW(path), L".mmtsedit")) {
+        CReadOnlyMmtsFile file;
+        file.DisableCas();
+        const char *errorMessage = nullptr;
+        if (!file.Open(path, IReadOnlyFile::OPEN_FLAG_NORMAL, errorMessage)) return -1;
+        return file.GetDurationMsec();
     }
     HANDLE hFile = ::CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return -1;
