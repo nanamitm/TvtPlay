@@ -70,8 +70,9 @@ work for positions that have not been played yet, and recently shown ones are
 kept in memory.
 
 This version covers **decrypted `.ts`, `.m2t` and `.m2ts` files and `.mp4`
-files with MPEG-2 or H.264 video** only. Nothing is shown for encrypted
-recordings, HEVC video, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
+files with MPEG-2, H.264 or HEVC video** only, including TS converted from
+MMTS by dantto4k. Nothing is shown for encrypted recordings, `.mmts` or
+`.mmtsedit`. The settings, in the `[Settings]`
 section of `TvtPlay.ini`:
 
 | Key | Default | Meaning |
@@ -81,7 +82,7 @@ section of `TvtPlay.ini`:
 | `ThumbnailCacheMax` | `128` | Number of thumbnails kept in memory |
 
 Decoding uses FFmpeg (libavcodec, libswscale and libavutil), statically
-linked and built LGPL-only with just the MPEG-2 and H.264 video decoders. See
+linked and built LGPL-only with just the MPEG-2, H.264 and HEVC video decoders. See
 [FFmpeg](#ffmpeg) under Building.
 
 ### Recorded EIT handling

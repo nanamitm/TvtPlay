@@ -185,9 +185,9 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
             j += 5 + ((section[j+3] & 0x0f) << 8 | section[j+4]);
         }
     }
-    // 今のところMPEG-2とH.264のみ
     m_codecID = videoType == H_262_VIDEO ? AV_CODEC_ID_MPEG2VIDEO :
-                videoType == AVC_VIDEO ? AV_CODEC_ID_H264 : AV_CODEC_ID_NONE;
+                videoType == AVC_VIDEO ? AV_CODEC_ID_H264 :
+                videoType == H_265_VIDEO ? AV_CODEC_ID_HEVC : AV_CODEC_ID_NONE;
     if (m_codecID == AV_CODEC_ID_NONE) return;
 
     bool fPcr = false;
@@ -315,13 +315,15 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
 
     bool fDone = false;
     bool fStarted = false;
-    // 最初のIピクチャから送った数。それまでのピクチャは表示できないので送らない
+    // 最初のランダムアクセス点から送った数。それまでのピクチャは表示できないので送らない
     int sentFromIntra = 0;
     int scrambledCount = 0;
     int clearCount = 0;
     std::vector<BYTE> buf;
-    for (int readSize = 0; !fDone && readSize < ES_READ_MAX; readSize += ES_READ_CHUNK) {
-        if (pOwner->IsSuperseded(serial) || !ReadAt(pos + readSize, ES_READ_CHUNK, buf)) break;
+    // パケットの途中で区切ると境界のパケットが失われるので、パケット長の倍数ずつ読む
+    int chunkSize = ES_READ_CHUNK / m_unitSize * m_unitSize;
+    for (int readSize = 0; !fDone && readSize < ES_READ_MAX; readSize += chunkSize) {
+        if (pOwner->IsSuperseded(serial) || !ReadAt(pos + readSize, chunkSize, buf)) break;
         CPacketIterator it(buf, m_unitSize);
         for (const BYTE *packet; !fDone && (packet = it.Next()) != nullptr;) {
             if (PidOf(packet) != m_videoPid) continue;
@@ -353,7 +355,12 @@ bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbna
                 if (n < 0) break;
                 payload += n;
                 size -= n;
-                if (dataSize <= 0 || (sentFromIntra == 0 && parser->pict_type != AV_PICTURE_TYPE_I)) continue;
+                if (dataSize <= 0) continue;
+                // H.264とHEVCはパーサーが判定したランダムアクセス点から始める。先頭スライスがIでも
+                // 下のスライスが他のピクチャを参照していたり、パラメータ未取得でIとされたりすることがある
+                // MPEG-2のパーサーはkey_frameを設定しないがIピクチャならそこから復号できる
+                bool fKey = m_codecID == AV_CODEC_ID_MPEG2VIDEO ? parser->pict_type == AV_PICTURE_TYPE_I : parser->key_frame == 1;
+                if (sentFromIntra == 0 && !fKey) continue;
                 m_packet->data = data;
                 m_packet->size = dataSize;
                 if (avcodec_send_packet(m_codec, m_packet) >= 0) {

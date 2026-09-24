@@ -163,7 +163,7 @@ void CThumbnailPreview::OnResult()
     std::unique_ptr<THUMBNAIL_IMAGE> image = m_generator.TakeResult();
     if (!image || image->generation != m_generation) return;
     if (image->status == 2) {
-        // 暗号化されている、MPEG-2でもH.264でもないなど
+        // 暗号化されている、対応していない映像の方式など
         m_fUnsupported = true;
         Hide();
         return;
