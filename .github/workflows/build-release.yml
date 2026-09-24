@@ -25,7 +25,7 @@ jobs:
       # The static FFmpeg for seek-bar thumbnails is configured and built in
       # the runner's MSYS2 with the MSVC tools (src\thirdparty\build-ffmpeg.ps1).
       - name: Cache FFmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: src/thirdparty/ffmpeg
           key: ffmpeg-${{ runner.os }}-${{ hashFiles('src/thirdparty/build-ffmpeg.ps1') }}

@@ -80,6 +80,7 @@
     <PreBuildEvent>
       <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
 msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m
+set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\build-ffmpeg.ps1"</Command>
       <Message>Building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
     </PreBuildEvent>
@@ -106,6 +107,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\bu
     <PreBuildEvent>
       <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
 msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m
+set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\build-ffmpeg.ps1"</Command>
       <Message>Building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
     </PreBuildEvent>
