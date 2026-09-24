@@ -1,0 +1,58 @@
+name: Build
+
+# Checks that every branch builds, FFmpeg for the seek-bar thumbnails
+# included, without publishing anything. Releases are made by
+# build-release.yml from v* tags.
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      # The static FFmpeg for seek-bar thumbnails is configured and built in
+      # the runner's MSYS2 with the MSVC tools (src\thirdparty\build-ffmpeg.ps1).
+      - name: Cache FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: src/thirdparty/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('src/thirdparty/build-ffmpeg.ps1') }}
+
+      - name: Install MSYS2 build tools for FFmpeg
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed make diffutils nasm
+
+      - name: Build TvtPlay
+        run: >
+          msbuild src\TvtPlay.sln /m /nologo
+          /p:Configuration=Release /p:Platform=x64
+
+      - name: Build BonDriver_Pipe
+        run: >
+          msbuild BonDriver_Pipe_src\BonDriver_Pipe.sln /m /nologo
+          /p:Configuration=Release /p:Platform=x64
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: TvtPlay-x64
+          path: |
+            src/x64/Release/TvtPlay.tvtp
+            BonDriver_Pipe_src/x64/Release/BonDriver_Pipe.dll
+            src/thirdparty/ffmpeg/COPYING.LGPLv2.1
