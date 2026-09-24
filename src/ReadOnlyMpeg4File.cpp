@@ -665,30 +665,32 @@ bool CReadOnlyMpeg4File::ReadAudioSampleDesc(std::pair<int64_t, int64_t> trak, u
                 // Type == "esds"
                 if (ArrayToDWORD(&buf[4]) == 0x65736473) {
                     buf.resize(boxLen);
-                    // 番兵
-                    buf.push_back(0);
+                    auto skipDescriptorHeader = [&buf](size_t &pos, uint8_t tag) {
+                        if (pos >= buf.size() || buf[pos++] != tag) return false;
+                        uint32_t length = 0;
+                        for (int j = 0; j < 4; ++j) {
+                            if (pos >= buf.size()) return false;
+                            const uint8_t b = buf[pos++];
+                            length = (length << 7) | (b & 0x7F);
+                            if (!(b & 0x80)) return length <= buf.size() - pos;
+                        }
+                        return false;
+                    };
                     size_t i = 12;
-                    if (i + 1 < buf.size() && buf[i] == 0x03) {
+                    if (skipDescriptorHeader(i, 0x03) && buf.size() - i >= 3) {
                         // ES (TODO: 仕様未確認なので想像)
-                        i += !(buf[i + 1] & 0x80) ? 2 : !(buf[i + 2] & 0x80) ? 3 : !(buf[i + 3] & 0x80) ? 4 : 5;
                         i += 3;
-                        if (i + 1 < buf.size() && buf[i] == 0x04) {
+                        if (skipDescriptorHeader(i, 0x04) && buf.size() - i >= 13) {
                             // DecoderConfig
-                            i += !(buf[i + 1] & 0x80) ? 2 : !(buf[i + 2] & 0x80) ? 3 : !(buf[i + 3] & 0x80) ? 4 : 5;
-                            if (i + 4 < buf.size() - 1) {
-                                int bufferSize = buf[i + 3] << 8 | buf[i + 4];
-                                i += 13;
-                                if (i + 1 < buf.size() && buf[i] == 0x05) {
-                                    // DecoderSpecificInfo
-                                    i += !(buf[i + 1] & 0x80) ? 2 : !(buf[i + 2] & 0x80) ? 3 : !(buf[i + 3] & 0x80) ? 4 : 5;
-                                    if (i + 1 < buf.size() - 1) {
-                                        int profile = buf[i] >> 3 & 0x03;
-                                        int freq = (buf[i] << 1 | buf[i + 1] >> 7) & 0x0F;
-                                        int ch = buf[i + 1] >> 3 & 0x0F;
-                                        CreateAdtsHeader(adtsHeader, profile, freq, ch, bufferSize);
-                                        return true;
-                                    }
-                                }
+                            int bufferSize = buf[i + 3] << 8 | buf[i + 4];
+                            i += 13;
+                            if (skipDescriptorHeader(i, 0x05) && buf.size() - i >= 2) {
+                                // DecoderSpecificInfo
+                                int profile = buf[i] >> 3 & 0x03;
+                                int freq = (buf[i] << 1 | buf[i + 1] >> 7) & 0x0F;
+                                int ch = buf[i + 1] >> 3 & 0x0F;
+                                CreateAdtsHeader(adtsHeader, profile, freq, ch, bufferSize);
+                                return true;
                             }
                         }
                     }
