@@ -99,7 +99,7 @@ bool ReadSection(std::vector<BYTE> &buf, int unitSize, int pid, std::vector<BYTE
 class CThumbnailGenerator::CDecoder
 {
 public:
-    CDecoder() : m_generation(-1), m_fUnsupported(false), m_unitSize(0), m_pcrPid(-1), m_videoPid(-1), m_initPcr(0)
+    CDecoder() : m_generation(-1), m_fUnsupported(false), m_unitSize(0), m_syncOffset(0), m_pcrPid(-1), m_videoPid(-1), m_initPcr(0)
                , m_mpeg4File(nullptr), m_mmtsFile(nullptr), m_codecID(AV_CODEC_ID_NONE), m_codec(nullptr), m_frame(nullptr), m_packet(nullptr), m_sws(nullptr) {}
     ~CDecoder() {
         sws_freeContext(m_sws);
@@ -115,6 +115,7 @@ private:
     bool ReadAt(__int64 pos, int size, std::vector<BYTE> &buf);
     bool FindPcrAt(__int64 pos, DWORD *pPcr);
     __int64 FindBytePosition(int msec, int durMsec, int serial, CThumbnailGenerator *pOwner);
+    __int64 AlignToPacket(__int64 pos) const;
     bool DecodeFrom(__int64 pos, int serial, CThumbnailGenerator *pOwner, bool *pfScrambled);
     bool ReceiveFrame();
     bool Scale(int width, THUMBNAIL_IMAGE *pImage);
@@ -131,6 +132,8 @@ private:
     void *m_mmtsFile;
 #endif
     int m_unitSize;
+    // 最初のパケットの位置。先頭がパケットの区切りでないファイルもある
+    int m_syncOffset;
     int m_pcrPid;
     int m_videoPid;
     DWORD m_initPcr;
@@ -176,6 +179,9 @@ void CThumbnailGenerator::CDecoder::Open(int generation, LPCTSTR path)
     if (!ReadAt(0, HEAD_READ_SIZE, head)) return;
     m_unitSize = select_unit_size(head.data(), head.data() + head.size());
     if (m_unitSize < 188 || 320 < m_unitSize) return;
+    const BYTE *sync = resync(head.data(), head.data() + head.size(), m_unitSize);
+    if (!sync) return;
+    m_syncOffset = static_cast<int>((sync - head.data()) % m_unitSize);
 
     // 映像のパケットが実際に含まれている最初の番組を探す
     // (サービスを絞らずに録画するとPATには録画していない番組も並ぶ)
@@ -314,7 +320,7 @@ __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, i
     __int64 pos = size * msec / durMsec;
     for (int i = 0; i < SEEK_TRIES_MAX; ++i) {
         if (pOwner->IsSuperseded(serial)) return -2;
-        pos -= pos % m_unitSize;
+        pos = AlignToPacket(pos);
         DWORD pcr;
         if (!FindPcrAt(pos, &pcr)) break;
         int posMsec = static_cast<int>((pcr - m_initPcr) / PCR_PER_MSEC);
@@ -332,7 +338,14 @@ __int64 CThumbnailGenerator::CDecoder::FindBytePosition(int msec, int durMsec, i
         if (hiMsec <= loMsec) break;
         pos = loPos + (hiPos - loPos) * (msec - loMsec) / (hiMsec - loMsec);
     }
-    return pos;
+    // 試行回数を使い切ったときの補間位置もそろえる
+    return AlignToPacket(pos);
+}
+
+// パケットの先頭にそろえる。ここから読めば、パケット長の倍数ずつ読んでも区切りでパケットが割れない
+__int64 CThumbnailGenerator::CDecoder::AlignToPacket(__int64 pos) const
+{
+    return pos < m_syncOffset ? m_syncOffset : pos - (pos - m_syncOffset) % m_unitSize;
 }
 
 bool CThumbnailGenerator::CDecoder::DecodeFrom(__int64 pos, int serial, CThumbnailGenerator *pOwner, bool *pfScrambled)
