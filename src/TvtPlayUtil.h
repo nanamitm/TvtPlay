@@ -74,6 +74,7 @@ public:
     void OnRButtonDown(int x, int y);
     void OnMouseMove(int x, int y);
     void SetMousePos(int x, int y) { m_mousePos.x = x; m_mousePos.y = y; }
+    bool GetHoverPosition(int *pMsec) const;
 private:
     void ProcessSeek(int x);
     static int ConvUnit(int x, int a, int b) { return x<0||a<0||b<=0 ? 0 : x>=b ? a : (int)((long long)x*a/b); }

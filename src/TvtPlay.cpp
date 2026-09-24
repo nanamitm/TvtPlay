@@ -18,6 +18,7 @@
 #include "Util.h"
 #include "StatusView.h"
 #include "TsSender.h"
+#include "ThumbnailPreview.h"
 #include "Playlist.h"
 #include "ChapterMap.h"
 #ifdef ENABLE_MMT4K
@@ -41,13 +42,14 @@
 
 static const WCHAR INFO_PLUGIN_NAME[] = L"TvtPlay";
 static const WCHAR INFO_DESCRIPTION[] = L"ファイル再生機能を追加 (ver.3.4" INFO_DESCRIPTION_SUFFIX;
-static const int INFO_VERSION = 26;
+static const int INFO_VERSION = 27;
 
 #define WM_UPDATE_STATUS    (WM_APP + 1)
 #define WM_QUERY_CLOSE_NEXT (WM_APP + 2)
 #define WM_QUERY_SEEK_BGN   (WM_APP + 3)
 #define WM_QUERY_RESET      (WM_APP + 4)
 #define WM_SATISFIED_POS_GT (WM_APP + 5)
+#define WM_THUMBNAIL_READY  (WM_APP + 6)
 
 // TvtPlayから他プラグインに情報提供するメッセージ
 #define TVTP_CURRENT_MSGVER 2
@@ -170,6 +172,9 @@ CTvtPlay::CTvtPlay()
     , m_fDialogOpen(false)
     , m_seekMode(0)
     , m_apparentPos(-1)
+    , m_fThumbnail(false)
+    , m_thumbnailWidth(0)
+    , m_thumbnailCacheMax(0)
     , m_hThread(nullptr)
     , m_hThreadEvent(nullptr)
     , m_threadID(0)
@@ -419,6 +424,9 @@ void CTvtPlay::LoadSettings()
         m_seekMode          = GetBufferedProfileInt(pBuf, TEXT("SeekMode"), 1);
         m_fSeekDrawOfs      = GetBufferedProfileInt(pBuf, TEXT("DispOffset"), 0) != 0;
         m_fSeekDrawTot      = GetBufferedProfileInt(pBuf, TEXT("DispTot"), 0) != 0;
+        m_fThumbnail        = GetBufferedProfileInt(pBuf, TEXT("Thumbnail"), 1) != 0;
+        m_thumbnailWidth    = GetBufferedProfileInt(pBuf, TEXT("ThumbnailWidth"), 160);
+        m_thumbnailCacheMax = GetBufferedProfileInt(pBuf, TEXT("ThumbnailCacheMax"), 128);
         m_fPosDrawTot       = GetBufferedProfileInt(pBuf, TEXT("DispTotOnStatus"), 0) != 0;
         m_fAutoClose        = GetBufferedProfileInt(pBuf, TEXT("AutoClose"), 0) != 0;
         m_seekItemMinWidth  = GetBufferedProfileInt(pBuf, TEXT("SeekItemMinWidth"), 128);
@@ -527,6 +535,9 @@ void CTvtPlay::SaveSettings(bool fWriteDefault) const
         WritePrivateProfileInt(SETTINGS, TEXT("SeekMode"), m_seekMode, m_szIniFileName);
         WritePrivateProfileInt(SETTINGS, TEXT("DispOffset"), m_fSeekDrawOfs, m_szIniFileName);
         WritePrivateProfileInt(SETTINGS, TEXT("DispTot"), m_fSeekDrawTot, m_szIniFileName);
+        WritePrivateProfileInt(SETTINGS, TEXT("Thumbnail"), m_fThumbnail, m_szIniFileName);
+        WritePrivateProfileInt(SETTINGS, TEXT("ThumbnailWidth"), m_thumbnailWidth, m_szIniFileName);
+        WritePrivateProfileInt(SETTINGS, TEXT("ThumbnailCacheMax"), m_thumbnailCacheMax, m_szIniFileName);
     }
     WritePrivateProfileInt(SETTINGS, TEXT("DispTotOnStatus"), m_fPosDrawTot, m_szIniFileName);
     WritePrivateProfileInt(SETTINGS, TEXT("AutoClose"), m_fAutoClose, m_szIniFileName);
@@ -656,8 +667,11 @@ bool CTvtPlay::InitializePlugin()
     wc.hInstance        = g_hinstDLL;
     wc.lpszClassName    = TVTPLAY_FRAME_WINDOW_CLASS;
     if (!::RegisterClass(&wc)) return false;
+    bool fThumbnailRegistered = CThumbnailPreview::Register(g_hinstDLL);
 
     LoadSettings();
+    if (!fThumbnailRegistered) m_fThumbnail = false;
+    m_thumbnail.SetOptions(m_thumbnailWidth, m_thumbnailCacheMax);
 
     // アイコン画像読み込み
     DrawUtil::CBitmap iconMap;
@@ -837,6 +851,7 @@ bool CTvtPlay::EnablePlugin(bool fEnable) {
         info.State = 0;
         m_pApp->SetStatusItem(&info);
         DestroyStatusTooltip();
+        m_thumbnail.Destroy();
 
         if (m_hwndFrame) {
             ::DestroyWindow(m_hwndFrame);
@@ -1598,6 +1613,8 @@ bool CTvtPlay::Open(LPCTSTR fileName, int offset, int stretchID)
         m_pApp->RegisterVariable(&rvi);
     }
 
+    if (m_fThumbnail) m_thumbnail.Open(fileName, m_hwndFrame, WM_THUMBNAIL_READY);
+
     // 再生初期化が完了したことを知らせる
     ::PostThreadMessage(m_threadID, WM_TS_INIT_DONE, 0, 0);
 
@@ -1630,6 +1647,7 @@ void CTvtPlay::Close()
         ::KillTimer(m_hwndFrame, TIMER_ID_WATCH_POS_GT);
         m_chapter.Close();
         m_tsSender.Close();
+        m_thumbnail.Close();
 
         // ストリームコールバックを利用したPCR/PTS/DTS変更を無効化
         if (m_tsShifter.IsEnabled()) {
@@ -2181,6 +2199,22 @@ void CTvtPlay::DestroyStatusTooltip()
 }
 
 
+// シークバー上のカーソル位置に応じてサムネイルを表示する
+void CTvtPlay::UpdateThumbnail(HWND hwnd, const POINT &cursorPos, const RECT &itemRect)
+{
+    if (!m_fThumbnail) return;
+    const CSeekStatusItem *pSeek = dynamic_cast<const CSeekStatusItem*>(m_statusView.GetItemByID(STATUS_ITEM_SEEK));
+    int msec;
+    LOGFONT font;
+    if (!IsOpen() || !pSeek || !pSeek->GetHoverPosition(&msec) || !GetStatusBarFont(&font)) {
+        m_thumbnail.Hide();
+        return;
+    }
+    m_thumbnail.Show(hwnd, itemRect, cursorPos.x, msec, GetDuration(), m_pApp->GetDPIFromWindow(hwnd), font,
+                     m_pApp->GetColor(L"StatusText"), m_pApp->GetColor(L"StatusBack"));
+}
+
+
 // 再生位置アイテムの幅を設定する
 void CTvtPlay::SetWidthPositionItem()
 {
@@ -2341,6 +2375,7 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
                 // フォーカスが当たった/離れた
                 if (pInfo->Event == TVTest::STATUS_ITEM_EVENT_LEAVE) {
                     pThis->HideStatusTooltip();
+                    pThis->m_thumbnail.Hide();
                 }
                 if (pThis->m_statusView.OnViewEvent(
                         pInfo->Event == TVTest::STATUS_ITEM_EVENT_ENTER ? CStatusView::VIEW_EVENT_ENTER : CStatusView::VIEW_EVENT_LEAVE)) {
@@ -2366,12 +2401,14 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
                 if (action != CStatusView::MOUSE_ACTION_MOVE) {
                     // ポップアップメニューなどに重ならないようにする
                     pThis->HideStatusTooltip();
+                    pThis->m_thumbnail.Hide();
                 }
                 if (pThis->m_statusView.OnMouseAction(action, pInfo->hwnd, pInfo->CursorPos, pInfo->ItemRect)) {
                     pThis->m_pApp->StatusItemNotify(1, TVTest::STATUS_ITEM_NOTIFY_REDRAW);
                 }
                 if (action == CStatusView::MOUSE_ACTION_MOVE) {
                     pThis->UpdateStatusTooltip(pInfo->hwnd, pInfo->CursorPos, pInfo->ItemRect);
+                    pThis->UpdateThumbnail(pInfo->hwnd, pInfo->CursorPos, pInfo->ItemRect);
                 }
                 return TRUE;
             }
@@ -2470,6 +2507,9 @@ LRESULT CALLBACK CTvtPlay::FrameWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             return 0;
         }
         break;
+    case WM_THUMBNAIL_READY:
+        pThis->m_thumbnail.OnResult();
+        return 0;
     case WM_UPDATE_STATUS:
         //DEBUG_OUT(TEXT("CTvtPlay::FrameWindowProc(): WM_UPDATE_STATUS\n"));
         pThis->m_pApp->StatusItemNotify(1, TVTest::STATUS_ITEM_NOTIFY_REDRAW);

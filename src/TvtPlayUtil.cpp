@@ -275,6 +275,41 @@ void CSeekStatusItem::OnRButtonDown(int x, int y)
     }
 }
 
+// マウスが指しているバー上の位置(ミリ秒)を取得する
+// チャプターの印を指していればその位置を返す
+bool CSeekStatusItem::GetHoverPosition(int *pMsec) const
+{
+    int dur = m_pPlugin->GetDuration();
+    if (dur <= 0 || m_pStatus->GetCurItem() != m_ID) return false;
+    RECT rc, rcc;
+    GetRect(&rc);
+    GetClientRect(&rcc);
+    int barWidth = rcc.right - rcc.left - 4;
+    int x = m_mousePos.x - (rcc.left - rc.left) - 2;
+    if (barWidth <= 0) return false;
+    if (::GetCapture() == m_pStatus->GetHandle()) {
+        // ドラッグ中はバーの外に出ても端の位置を指しているとみなす
+        x = min(max(x, 0), barWidth - 1);
+    }
+    else if (x < 0 || barWidth <= x) {
+        return false;
+    }
+
+    const std::map<int, CChapterMap::CHAPTER> &chMap = m_pPlugin->GetChapter().Get();
+    if (0 <= m_mousePos.y && m_mousePos.y < (rc.bottom - rc.top) / 2 - 3 && !chMap.empty()) {
+        int chapPosL = ConvUnit(x - 5, dur, barWidth);
+        int chapPosR = ConvUnit(x + 5, dur, barWidth);
+        if (chapPosR >= dur) chapPosR = INT_MAX;
+        std::map<int, CChapterMap::CHAPTER>::const_iterator it = chMap.lower_bound(chapPosL);
+        if (it != chMap.end() && it->first < chapPosR) {
+            *pMsec = it->first;
+            return true;
+        }
+    }
+    *pMsec = ConvUnit(x, dur, barWidth);
+    return true;
+}
+
 void CSeekStatusItem::OnMouseMove(int x, int y)
 {
     if (m_mousePos.x != x || m_mousePos.y != y) {

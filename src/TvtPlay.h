@@ -86,6 +86,7 @@ private:
     void ApplyStatusTooltipTheme();
     void HideStatusTooltip();
     void DestroyStatusTooltip();
+    void UpdateThumbnail(HWND hwnd, const POINT &cursorPos, const RECT &itemRect);
     static LRESULT CALLBACK EventCallback(UINT Event, LPARAM lParam1, LPARAM lParam2, void *pClientData);
     static BOOL CALLBACK WindowMsgCallback(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *pResult, void *pUserData);
     static LRESULT CALLBACK FrameWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -132,6 +133,9 @@ private:
     bool m_fDialogOpen;
     int m_seekMode;
     int m_apparentPos;
+    bool m_fThumbnail;
+    int m_thumbnailWidth, m_thumbnailCacheMax;
+    CThumbnailPreview m_thumbnail;
 
     // TS送信
     HANDLE m_hThread, m_hThreadEvent;

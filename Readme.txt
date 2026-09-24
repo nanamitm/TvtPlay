@@ -61,6 +61,29 @@ Like `mmts-dsfilter`, this playback path seeks to RAP boundaries and does not
 re-encode partial GOPs. For frame-accurate non-RAP cuts, export the edited media
 from `mmts-edit-gui` instead.
 
+### Seek-bar thumbnails
+
+Hovering over the seek bar shows a thumbnail of the video at that position
+above the bar, with its time. Dragging with `SeekMode=1` updates it as well.
+Thumbnails are decoded on a background thread from the file itself, so they
+work for positions that have not been played yet, and recently shown ones are
+kept in memory.
+
+This first version covers **decrypted `.ts`, `.m2t` and `.m2ts` files with
+MPEG-2 video** only. Nothing is shown for encrypted recordings, H.264/HEVC
+video, `.mp4`, `.mmts` or `.mmtsedit`. The settings, in the `[Settings]`
+section of `TvtPlay.ini`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `Thumbnail` | `1` | `0` turns the thumbnails off |
+| `ThumbnailWidth` | `160` | Width in pixels at 96 DPI (64-640) |
+| `ThumbnailCacheMax` | `128` | Number of thumbnails kept in memory |
+
+Decoding uses FFmpeg (libavcodec, libswscale and libavutil), statically
+linked and built LGPL-only with just the MPEG-2 video decoder. See
+[FFmpeg](#ffmpeg) under Building.
+
 ### Recorded EIT handling
 
 Recorded schedule EIT sections (`table_id` `0x50`-`0x5F`) are removed from the
@@ -90,6 +113,24 @@ Open `src/TvtPlay.sln` in Visual Studio and build either `Debug|x64` or
 `Release|x64`. Win32 configurations are intentionally not provided. The build
 uses the bundled dantto4k and TSDuck sources; the project pre-build step creates
 the required TSDuck static libraries when needed.
+
+### FFmpeg
+
+The pre-build step also runs `src/thirdparty/build-ffmpeg.ps1`, which downloads
+the pinned FFmpeg source release (checked by SHA-256), builds the minimal static
+libraries with the MSVC tools, and installs them into `src/thirdparty/ffmpeg`.
+It does nothing once they are up to date. The first build needs
+[MSYS2](https://www.msys2.org/) with `make` and `diffutils`
+(`pacman -S make diffutils`) at `C:\msys64`, or at the path in `MSYS2_ROOT`.
+
+FFmpeg is licensed under the LGPL 2.1 or later. Release packages include its
+licence as `FFmpeg_COPYING.LGPLv2.1.txt`; the FFmpeg source is available from
+<https://ffmpeg.org/releases/>, and the version and configure options used are
+in `build-ffmpeg.ps1`. Because TvtPlay's own source is public, it can be rebuilt
+and relinked against a modified FFmpeg.
+
+`tests/run-thumbnail-generator.ps1 <file.ts>` builds the thumbnail generator on
+its own and writes thumbnails at several positions of a TS file as BMP files.
 
 ## Further documentation
 
