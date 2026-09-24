@@ -569,16 +569,27 @@ void CTvtPlay::SaveSettings(bool fWriteDefault) const
         WritePrivateProfileInt(SETTINGS, TEXT("StatusItemOrder"), m_posItemOrder, m_szIniFileName);
         ::WritePrivateProfileString(SETTINGS, TEXT("IconImage"), m_szIconFileName, m_szIniFileName);
 
-        // 並びは0で終わる。既定値のある位置で終わるなら0を書かないと既定値が補われてしまう
-        for (int i = 0; i < m_seekListNum || (i < COMMAND_S_MAX && i == m_seekListNum && DEFAULT_SEEK_LIST[i]); ++i) {
+        // 並びは0で終わる。続きのキーを読むと値が得られる(既定値があるか、短くする前の値が残っている)なら
+        // 0を書いて終わりを示さないと、次に読んだときに並びが続いてしまう
+        for (int i = 0; i <= m_seekListNum && i < COMMAND_S_MAX; ++i) {
             TCHAR key[16];
             _stprintf_s(key, TEXT("Seek%c"), TEXT('A') + i);
-            WritePrivateProfileInt(SETTINGS, key, i < m_seekListNum ? m_seekList[i] : 0, m_szIniFileName);
+            if (i < m_seekListNum) {
+                WritePrivateProfileInt(SETTINGS, key, m_seekList[i], m_szIniFileName);
+            }
+            else if (::GetPrivateProfileInt(SETTINGS, key, DEFAULT_SEEK_LIST[i], m_szIniFileName)) {
+                WritePrivateProfileInt(SETTINGS, key, 0, m_szIniFileName);
+            }
         }
-        for (int i = 0; i < m_stretchListNum || (i < COMMAND_S_MAX && i == m_stretchListNum && DEFAULT_STRETCH_LIST[i]); ++i) {
+        for (int i = 0; i <= m_stretchListNum && i < COMMAND_S_MAX; ++i) {
             TCHAR key[16];
             _stprintf_s(key, TEXT("Stretch%c"), TEXT('A') + i);
-            WritePrivateProfileInt(SETTINGS, key, i < m_stretchListNum ? m_stretchList[i] : 0, m_szIniFileName);
+            if (i < m_stretchListNum) {
+                WritePrivateProfileInt(SETTINGS, key, m_stretchList[i], m_szIniFileName);
+            }
+            else if (::GetPrivateProfileInt(SETTINGS, key, DEFAULT_STRETCH_LIST[i], m_szIniFileName)) {
+                WritePrivateProfileInt(SETTINGS, key, 0, m_szIniFileName);
+            }
         }
         for (int i = 0; i < BUTTON_MAX; ++i) {
             TCHAR key[16];
