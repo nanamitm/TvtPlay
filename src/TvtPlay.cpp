@@ -36,6 +36,7 @@
 #define TVTEST_PLUGIN_CLASS_IMPLEMENT
 #define TVTEST_PLUGIN_VERSION TVTEST_PLUGIN_VERSION_(0,0,14)
 #include "TVTestPlugin.h"
+#include "SettingsDialog.h"
 #include "TvtPlay.h"
 
 #define INFO_DESCRIPTION_SUFFIX L"+)"
@@ -243,7 +244,7 @@ bool CTvtPlay::GetPluginInfo(TVTest::PluginInfo *pInfo)
 {
     // プラグインの情報を返す
     pInfo->Type           = TVTest::PLUGIN_TYPE_NORMAL;
-    pInfo->Flags          = TVTest::PLUGIN_FLAG_DISABLEONSTART;
+    pInfo->Flags          = TVTest::PLUGIN_FLAG_DISABLEONSTART | TVTest::PLUGIN_FLAG_HASSETTINGS;
     pInfo->pszPluginName  = INFO_PLUGIN_NAME;
     pInfo->pszCopyright   = L"Public Domain";
     pInfo->pszDescription = INFO_DESCRIPTION;
@@ -568,15 +569,16 @@ void CTvtPlay::SaveSettings(bool fWriteDefault) const
         WritePrivateProfileInt(SETTINGS, TEXT("StatusItemOrder"), m_posItemOrder, m_szIniFileName);
         ::WritePrivateProfileString(SETTINGS, TEXT("IconImage"), m_szIconFileName, m_szIniFileName);
 
-        for (int i = 0; i < m_seekListNum; ++i) {
+        // 並びは0で終わる。既定値のある位置で終わるなら0を書かないと既定値が補われてしまう
+        for (int i = 0; i < m_seekListNum || (i < COMMAND_S_MAX && i == m_seekListNum && DEFAULT_SEEK_LIST[i]); ++i) {
             TCHAR key[16];
             _stprintf_s(key, TEXT("Seek%c"), TEXT('A') + i);
-            WritePrivateProfileInt(SETTINGS, key, m_seekList[i], m_szIniFileName);
+            WritePrivateProfileInt(SETTINGS, key, i < m_seekListNum ? m_seekList[i] : 0, m_szIniFileName);
         }
-        for (int i = 0; i < m_stretchListNum; ++i) {
+        for (int i = 0; i < m_stretchListNum || (i < COMMAND_S_MAX && i == m_stretchListNum && DEFAULT_STRETCH_LIST[i]); ++i) {
             TCHAR key[16];
             _stprintf_s(key, TEXT("Stretch%c"), TEXT('A') + i);
-            WritePrivateProfileInt(SETTINGS, key, m_stretchList[i], m_szIniFileName);
+            WritePrivateProfileInt(SETTINGS, key, i < m_stretchListNum ? m_stretchList[i] : 0, m_szIniFileName);
         }
         for (int i = 0; i < BUTTON_MAX; ++i) {
             TCHAR key[16];
@@ -862,6 +864,146 @@ bool CTvtPlay::EnablePlugin(bool fEnable) {
 }
 
 
+// 設定ダイアログを表示し、OKなら保存してすぐに反映できるものを反映する
+bool CTvtPlay::ShowSettings(HWND hwndOwner)
+{
+    // プラグインを有効にする前でも開けるように
+    LoadSettings();
+    TVTPLAY_SETTINGS s;
+    GetSettings(s);
+    if (!ShowSettingsDialog(m_pApp, g_hinstDLL, hwndOwner, m_szIniFileName, s)) return false;
+    ApplySettings(s);
+    return true;
+}
+
+void CTvtPlay::GetSettings(TVTPLAY_SETTINGS &s)
+{
+    s.fShowOpenDialog = m_fShowOpenDialog;
+    s.fAutoClose = m_fAutoClose;
+    s.fileInfoMax = m_hashListMax;
+    s.fFileInfoAutoUpdate = m_fUpdateHashList;
+    _tcscpy_s(s.popupPattern, m_szPopupPattern);
+    s.popupMax = m_popupMax;
+    s.fPopupDesc = m_fPopupDesc;
+    s.playlistPopupMax = m_playlistPopupMax;
+
+    s.seekMode = m_seekMode;
+    s.fSeekDrawOfs = m_fSeekDrawOfs;
+    s.fSeekDrawTot = m_fSeekDrawTot;
+    s.fPosDrawTot = m_fPosDrawTot;
+    s.fThumbnail = m_fThumbnail;
+    s.thumbnailWidth = m_thumbnailWidth;
+    s.thumbnailCacheMax = m_thumbnailCacheMax;
+    s.seekItemMinWidth = m_seekItemMinWidth;
+    s.posItemWidth = m_posItemWidth;
+    s.seekItemOrder = m_seekItemOrder;
+    s.posItemOrder = m_posItemOrder;
+    _tcscpy_s(s.iconFileName, m_szIconFileName);
+
+    std::copy(m_seekList, m_seekList + m_seekListNum, s.seekList);
+    s.seekListNum = m_seekListNum;
+    std::copy(m_stretchList, m_stretchList + m_stretchListNum, s.stretchList);
+    s.stretchListNum = m_stretchListNum;
+    s.stretchMode = m_stretchMode;
+    s.noMuteMax = m_noMuteMax;
+    s.noMuteMin = m_noMuteMin;
+    for (int i = 0; i < BUTTON_MAX; ++i) {
+        _tcscpy_s(s.buttonList[i], m_buttonList[i]);
+    }
+
+    _tcscpy_s(s.chaptersDirName, m_szChaptersDirName);
+    _tcscpy_s(s.chapterIn, m_chapter.GetChapterIn());
+    _tcscpy_s(s.chapterOut, m_chapter.GetChapterOut());
+    _tcscpy_s(s.chapterXIn, m_chapter.GetChapterXIn());
+    _tcscpy_s(s.chapterXOut, m_chapter.GetChapterXOut());
+
+    s.readBufSizeKB = m_readBufSizeKB;
+    s.supposedDispDelay = m_supposedDispDelay;
+    s.resetMode = m_resetMode;
+    s.resetDropInterval = m_resetDropInterval;
+    s.pcrThresholdMsec = m_pcrThresholdMsec;
+    s.threadPriority = m_threadPriority;
+    s.modTimestampMode = m_modTimestampMode;
+    s.fConvTo188 = m_fConvTo188;
+    s.fUnderrunCtrl = m_fUnderrunCtrl;
+    s.fUseQpc = m_fUseQpc;
+    s.fTryGaplessPause = m_fTryGaplessPause;
+}
+
+void CTvtPlay::ApplySettings(const TVTPLAY_SETTINGS &s)
+{
+    bool fThumbnailWas = m_fThumbnail;
+    int modTimestampModeWas = m_modTimestampMode;
+
+    m_fShowOpenDialog = s.fShowOpenDialog;
+    m_fAutoClose = s.fAutoClose;
+    m_hashListMax = s.fileInfoMax;
+    m_fUpdateHashList = s.fFileInfoAutoUpdate;
+    _tcscpy_s(m_szPopupPattern, s.popupPattern);
+    m_popupMax = s.popupMax;
+    m_fPopupDesc = s.fPopupDesc;
+    m_playlistPopupMax = s.playlistPopupMax;
+
+    m_seekMode = s.seekMode;
+    m_fSeekDrawOfs = s.fSeekDrawOfs;
+    m_fSeekDrawTot = s.fSeekDrawTot;
+    m_fPosDrawTot = s.fPosDrawTot;
+    m_fThumbnail = s.fThumbnail;
+    m_thumbnailWidth = s.thumbnailWidth;
+    m_thumbnailCacheMax = s.thumbnailCacheMax;
+    m_seekItemMinWidth = s.seekItemMinWidth;
+    m_posItemWidth = s.posItemWidth;
+    m_seekItemOrder = s.seekItemOrder;
+    m_posItemOrder = s.posItemOrder;
+    _tcscpy_s(m_szIconFileName, s.iconFileName);
+
+    std::copy(s.seekList, s.seekList + s.seekListNum, m_seekList);
+    m_seekListNum = s.seekListNum;
+    std::copy(s.stretchList, s.stretchList + s.stretchListNum, m_stretchList);
+    m_stretchListNum = s.stretchListNum;
+    m_stretchMode = s.stretchMode;
+    m_noMuteMax = s.noMuteMax;
+    m_noMuteMin = s.noMuteMin;
+    for (int i = 0; i < BUTTON_MAX; ++i) {
+        _tcscpy_s(m_buttonList[i], s.buttonList[i]);
+    }
+
+    _tcscpy_s(m_szChaptersDirName, s.chaptersDirName);
+    _tcscpy_s(m_chapter.GetChapterIn(), s.chapterIn);
+    _tcscpy_s(m_chapter.GetChapterOut(), s.chapterOut);
+    _tcscpy_s(m_chapter.GetChapterXIn(), s.chapterXIn);
+    _tcscpy_s(m_chapter.GetChapterXOut(), s.chapterXOut);
+
+    m_readBufSizeKB = s.readBufSizeKB;
+    m_supposedDispDelay = s.supposedDispDelay;
+    m_resetMode = s.resetMode;
+    m_resetDropInterval = s.resetDropInterval;
+    m_pcrThresholdMsec = s.pcrThresholdMsec;
+    m_threadPriority = s.threadPriority;
+    m_modTimestampMode = s.modTimestampMode;
+    m_fConvTo188 = s.fConvTo188;
+    m_fUnderrunCtrl = s.fUnderrunCtrl;
+    m_fUseQpc = s.fUseQpc;
+    m_fTryGaplessPause = s.fTryGaplessPause;
+
+    SaveSettings(true);
+
+    // ステータスバーの項目やコマンドの構成は起動時に決まるので、ここではすぐに効くものだけ反映する
+    if (m_modTimestampMode != modTimestampModeWas) {
+        SetModTimestamp(m_modTimestampMode == 1);
+    }
+    m_thumbnail.SetOptions(m_thumbnailWidth, m_thumbnailCacheMax);
+    if (!m_fThumbnail) {
+        m_thumbnail.Close();
+    }
+    else if (!fThumbnailWas && IsOpen() && !m_playlist.Get().empty()) {
+        m_thumbnail.Open(m_playlist.Get()[m_playlist.GetPosition()].path, m_hwndFrame, WM_THUMBNAIL_READY);
+    }
+    SetWidthPositionItem();
+    m_pApp->StatusItemNotify(1, TVTest::STATUS_ITEM_NOTIFY_REDRAW);
+}
+
+
 // ポップアップメニュー選択でプラグイン設定する
 void CTvtPlay::SetupWithPopup(const POINT &pt, UINT flags)
 {
@@ -927,6 +1069,9 @@ void CTvtPlay::SetupWithPopup(const POINT &pt, UINT flags)
     case IDM_AUTO_CLOSE:
         m_fAutoClose = !m_fAutoClose;
         SaveSettings();
+        break;
+    case IDM_SETTINGS:
+        ShowSettings(m_pApp->GetAppWindow());
         break;
     default:
 #ifdef EN_SWC
@@ -2312,6 +2457,9 @@ LRESULT CALLBACK CTvtPlay::EventCallback(UINT Event, LPARAM lParam1, LPARAM lPar
             }
         }
         break;
+    case TVTest::EVENT_PLUGINSETTINGS:
+        // プラグインの設定から設定ダイアログを開く
+        return pThis->ShowSettings(reinterpret_cast<HWND>(lParam1));
     case TVTest::EVENT_COLORCHANGE:
         // 色の設定が変化した
         pThis->ApplyStatusTooltipTheme();

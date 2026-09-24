@@ -88,6 +88,21 @@ Decoding uses FFmpeg (libavcodec, libswscale and libavutil), statically
 linked and built LGPL-only with just the MPEG-2, H.264 and HEVC video decoders. See
 [FFmpeg](#ffmpeg) under Building.
 
+### Settings dialog
+
+The `TvtPlay.ini` settings can be edited in a dialog, opened from TVTest's
+plug-in settings or from **設定...** at the bottom of the menu shown by
+right-clicking the position display. Its tabs are 全般, シークバー,
+シーク・倍速, チャプター, MP4, MMTS and 詳細 (the `Ts*` transfer settings, which
+normally need no change).
+
+Settings marked ★ take effect after TVTest is restarted, as the status bar
+items and commands are set up at startup. The `[MP4]` and `[MMTS]` settings and
+most on the 詳細 tab apply from the next file opened; the rest apply at once.
+Editing `TvtPlay.ini` by hand still works, and the dialog reads it afresh each
+time it opens. The button layout (`Button00`-`Button17`) is edited as text, one
+button per line, in the same format as the ini.
+
 ### Recorded EIT handling
 
 Recorded schedule EIT sections (`table_id` `0x50`-`0x5F`) are removed from the

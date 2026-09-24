@@ -126,6 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\bu
     <ClInclude Include="Mmt4kConverter.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="TvtPlayUtil.h" />
+    <ClInclude Include="SettingsDialog.h" />
     <ClInclude Include="StatusView.h" />
     <ClInclude Include="ThumbnailGenerator.h" />
     <ClInclude Include="ThumbnailPreview.h" />
@@ -151,6 +152,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\bu
     <ClCompile Include="ThumbnailGenerator.cpp" />
     <ClCompile Include="ThumbnailPreview.cpp" />
     <ClCompile Include="TvtPlayUtil.cpp" />
+    <ClCompile Include="SettingsDialog.cpp" />
     <ClCompile Include="StatusView.cpp" />
     <ClCompile Include="TsSender.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">MaxSpeed</Optimization>

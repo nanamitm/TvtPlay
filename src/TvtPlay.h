@@ -36,6 +36,7 @@ public:
     bool IsPosDrawTotEnabled() const { return m_fPosDrawTot; }
     int GetStretchID();
     void SetupWithPopup(const POINT &pt, UINT flags);
+    bool ShowSettings(HWND hwndOwner);
     void EditChapterWithPopup(int pos, const POINT &pt, UINT flags);
     void EditAllChaptersWithPopup(const POINT &pt, UINT flags);
     void Pause(bool fPause);
@@ -87,6 +88,8 @@ private:
     void HideStatusTooltip();
     void DestroyStatusTooltip();
     void UpdateThumbnail(HWND hwnd, const POINT &cursorPos, const RECT &itemRect);
+    void GetSettings(TVTPLAY_SETTINGS &s);
+    void ApplySettings(const TVTPLAY_SETTINGS &s);
     static LRESULT CALLBACK EventCallback(UINT Event, LPARAM lParam1, LPARAM lParam2, void *pClientData);
     static BOOL CALLBACK WindowMsgCallback(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *pResult, void *pUserData);
     static LRESULT CALLBACK FrameWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
