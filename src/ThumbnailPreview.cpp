@@ -178,10 +178,11 @@ void CThumbnailPreview::OnResult()
             memcpy(pBits, image->bits.data(), image->bits.size());
             entry.width = image->width;
             entry.height = image->height;
+            AddEntry(image->msec, entry);
         }
     }
-    // 作れなかった位置も覚えておき、何度も要求しないようにする
-    AddEntry(image->msec, entry);
+    // 作れなかった位置は覚えない。録画中のファイルの末尾のように、後で作れるようになることがある
+    // その位置を指している間は最後の要求のままなので要求し直さず、離れて戻ってきたときに要求し直す
     if (image->msec == m_key && m_hwnd && ::IsWindowVisible(m_hwnd)) {
         m_shownKey = m_key;
         Layout();
