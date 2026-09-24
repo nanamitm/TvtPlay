@@ -77,11 +77,13 @@ public:
     bool GetHoverPosition(int *pMsec) const;
 private:
     void ProcessSeek(int x);
+    bool CalcHoverPosition(int *pMsec) const;
     static int ConvUnit(int x, int a, int b) { return x<0||a<0||b<=0 ? 0 : x>=b ? a : (int)((long long)x*a/b); }
     ITvtPlayController *m_pPlugin;
     bool m_fDrawOfs, m_fDrawTot;
     POINT m_mousePos;
     int m_seekMode;
+    int m_hoverMsec;
 };
 
 class CPositionStatusItem : public CStatusItem

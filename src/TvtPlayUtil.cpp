@@ -12,6 +12,7 @@ CSeekStatusItem::CSeekStatusItem(CStatusView *pStatus, ITvtPlayController *pPlug
     , m_fDrawOfs(fDrawOfs)
     , m_fDrawTot(fDrawTot)
     , m_seekMode(seekMode==1 ? 1 : seekMode==2 ? 2 : 0)
+    , m_hoverMsec(-1)
 {
     m_MinWidth = m_Width;
     SetMousePos(-1, -1);
@@ -276,14 +277,20 @@ void CSeekStatusItem::OnRButtonDown(int x, int y)
 }
 
 // マウスが指しているバー上の位置(ミリ秒)を取得する
-// チャプターの印を指していればその位置を返す
+// 項目の矩形はマウス操作の処理中しか得られないため、OnMouseMove()で求めたものを返す
 bool CSeekStatusItem::GetHoverPosition(int *pMsec) const
 {
+    if (m_hoverMsec < 0 || m_pStatus->GetCurItem() != m_ID) return false;
+    *pMsec = m_hoverMsec;
+    return true;
+}
+
+// チャプターの印を指していればその位置を返す
+bool CSeekStatusItem::CalcHoverPosition(int *pMsec) const
+{
     int dur = m_pPlugin->GetDuration();
-    if (dur <= 0 || m_pStatus->GetCurItem() != m_ID) return false;
     RECT rc, rcc;
-    GetRect(&rc);
-    GetClientRect(&rcc);
+    if (dur <= 0 || !GetRect(&rc) || !GetClientRect(&rcc)) return false;
     int barWidth = rcc.right - rcc.left - 4;
     int x = m_mousePos.x - (rcc.left - rc.left) - 2;
     if (barWidth <= 0) return false;
@@ -312,8 +319,11 @@ bool CSeekStatusItem::GetHoverPosition(int *pMsec) const
 
 void CSeekStatusItem::OnMouseMove(int x, int y)
 {
-    if (m_mousePos.x != x || m_mousePos.y != y) {
-        SetMousePos(x, y);
+    bool fMoved = m_mousePos.x != x || m_mousePos.y != y;
+    SetMousePos(x, y);
+    int msec;
+    m_hoverMsec = CalcHoverPosition(&msec) ? msec : -1;
+    if (fMoved) {
         if (m_seekMode==1 && ::GetCapture()==m_pStatus->GetHandle()) {
             int dur = m_pPlugin->GetDuration();
             RECT rc, rcc;
