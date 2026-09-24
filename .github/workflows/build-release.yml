@@ -22,6 +22,17 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v3
 
+      # The static FFmpeg for seek-bar thumbnails is configured and built in
+      # the runner's MSYS2 with the MSVC tools (src\thirdparty\build-ffmpeg.ps1).
+      - name: Cache FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: src/thirdparty/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('src/thirdparty/build-ffmpeg.ps1') }}
+
+      - name: Install MSYS2 build tools for FFmpeg
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed make diffutils
+
       - name: Build TvtPlay
         run: >
           msbuild src\TvtPlay.sln /m /nologo
@@ -47,6 +58,7 @@ jobs:
           Copy-Item 'src\x64\Release\TvtPlay.tvtp' $plugins
           Copy-Item 'BonDriver_Pipe_src\x64\Release\BonDriver_Pipe.dll' $staging
           Copy-Item 'Readme.txt', 'TvtPlay_Readme.txt', 'TvtPlay_Blacklist.txt' $staging
+          Copy-Item 'src\thirdparty\ffmpeg\COPYING.LGPLv2.1' (Join-Path $staging 'FFmpeg_COPYING.LGPLv2.1.txt')
 
           Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -Force
           (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() + "  " +
