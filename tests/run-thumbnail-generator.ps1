@@ -8,7 +8,11 @@ $src = Join-Path $PSScriptRoot '..\src'
 
 if (-not $env:VCINSTALLDIR) {
     $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
-    $vsPath = & (Join-Path $installer 'vswhere.exe') -latest -version '[17.0,18.0)' -products * -property installationPath
+    # The plugin and this test are built by the same Visual Studio, so any
+    # version whose toolset the project knows will do (VS 2022 and 2026).
+    $vsPath = & (Join-Path $installer 'vswhere.exe') -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsPath) { throw 'Visual Studio with the C++ x64 tools is required' }
     $env:PATH = "$installer;$env:PATH"
     cmd /c "`"$vsPath\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
         if ($_ -match '^([^=]+)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
