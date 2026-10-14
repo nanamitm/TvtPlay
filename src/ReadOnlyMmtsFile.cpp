@@ -69,20 +69,59 @@ bool ExtractTextValue(const std::string &line, const char *key, __int64 &value)
     return ParseInteger(std::string_view(line).substr(valueBegin, end - valueBegin), value);
 }
 
+// Walk complete JSON values so keys in strings or nested objects are not members.
+bool JsonValueEnd(const std::string &text, size_t &pos, unsigned depth = 0)
+{
+    if (depth > 64) return false;
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+    if (pos == text.size()) return false;
+    const char first = text[pos++];
+    if (first == '"') {
+        while (pos < text.size()) {
+            char ch = text[pos++];
+            if (ch == '"') return true;
+            if (ch == '\\' && pos < text.size()) ++pos;
+            else if (static_cast<unsigned char>(ch) < 0x20) return false;
+        }
+        return false;
+    }
+    if (first == '{' || first == '[') {
+        const char close = first == '{' ? '}' : ']';
+        while (pos < text.size()) {
+            while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+            if (pos < text.size() && text[pos] == close) { ++pos; return true; }
+            if (!JsonValueEnd(text, pos, depth + 1)) return false;
+            while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+            if (pos == text.size()) return false;
+            if (text[pos] == close) { ++pos; return true; }
+            if (text[pos] != ',' && !(first == '{' && text[pos] == ':')) return false;
+            ++pos;
+        }
+        return false;
+    }
+    while (pos < text.size() && text[pos] != ',' && text[pos] != '}' && text[pos] != ']') ++pos;
+    return true;
+}
+
 bool FindJsonValue(const std::string &text, const char *key, size_t &valueBegin, size_t searchBegin = 0)
 {
-    const std::string needle = std::string("\"") + key + "\"";
     size_t pos = searchBegin;
-    while ((pos = text.find(needle, pos)) != std::string::npos) {
-        pos += needle.size();
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+    if (pos == text.size() || text[pos++] != '{') return false;
+    for (;;) {
         while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
-        if (pos >= text.size() || text[pos] != ':') continue;
-        ++pos;
+        if (pos == text.size() || text[pos] != '"') return false;
+        const size_t begin = pos;
+        if (!JsonValueEnd(text, pos)) return false;
+        const bool match = text.substr(begin, pos - begin) == std::string("\"") + key + "\"";
         while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
-        valueBegin = pos;
-        return true;
+        if (pos == text.size() || text[pos++] != ':') return false;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (match) { valueBegin = pos; return true; }
+        if (!JsonValueEnd(text, pos)) return false;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (pos == text.size() || text[pos++] != ',') return false;
     }
-    return false;
 }
 
 bool ReadJsonInteger(const std::string &text, size_t valueBegin, __int64 &value)
@@ -320,16 +359,31 @@ bool CReadOnlyMmtsFile::LoadEdit(LPCTSTR editPath, const char *&errorMessage)
     std::vector<EditSegment> segments;
     size_t scan = 0;
     int totalDuration = 0;
+    if (!FindJsonValue(json, "timeline", scan) || scan >= json.size() || json[scan++] != '[') {
+        errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+        return false;
+    }
     for (;;) {
-        __int64 start = 0, end = 0;
-        if (!FindJsonValue(json, "sourceStartMs", valueBegin, scan)) break;
-        const size_t afterStart = valueBegin + 1;
-        if (!ReadJsonInteger(json, valueBegin, start) || !FindJsonValue(json, "sourceEndMs", valueBegin, afterStart) ||
-            !ReadJsonInteger(json, valueBegin, end)) {
+        while (scan < json.size() && std::isspace(static_cast<unsigned char>(json[scan]))) ++scan;
+        if (scan < json.size() && json[scan] == ']') break;
+        const size_t begin = scan;
+        if (scan == json.size() || json[scan] != '{' || !JsonValueEnd(json, scan)) {
             errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
             return false;
         }
-        scan = valueBegin + 1;
+        const std::string object = json.substr(begin, scan - begin);
+        __int64 start = 0, end = 0;
+        if (!FindJsonValue(object, "sourceStartMs", valueBegin) || !ReadJsonInteger(object, valueBegin, start) ||
+            !FindJsonValue(object, "sourceEndMs", valueBegin) || !ReadJsonInteger(object, valueBegin, end)) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+            return false;
+        }
+        while (scan < json.size() && std::isspace(static_cast<unsigned char>(json[scan]))) ++scan;
+        if (scan == json.size() || (json[scan] != ',' && json[scan] != ']')) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+            return false;
+        }
+        if (json[scan] == ',') ++scan;
         if (start < 0 || end <= start || end > (std::numeric_limits<int>::max)() ||
             end - start > (std::numeric_limits<int>::max)() || totalDuration > (std::numeric_limits<int>::max)() - (end - start)) {
             errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit segment";

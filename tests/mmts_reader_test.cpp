@@ -5,10 +5,10 @@
 #include <vector>
 #include <cassert>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <tchar.h>
-#define private public
 #include "../src/ReadOnlyMmtsFile.h"
-#undef private
 #include "../src/Mmt4kConverter.h"
 
 HINSTANCE g_hinstDLL = nullptr;
@@ -59,7 +59,29 @@ void Initialize(CReadOnlyMmtsFile &file, bool edited = true) {
     }
 }
 
+bool LoadJson(CReadOnlyMmtsFile &reader, const std::string &json) {
+    WCHAR dir[MAX_PATH], path[MAX_PATH];
+    assert(GetTempPathW(MAX_PATH, dir) && GetTempFileNameW(dir, L"tvt", 0, path));
+    { std::ofstream file(std::filesystem::path(path), std::ios::binary); file << json; }
+    const char *error = nullptr;
+    bool ok = reader.LoadEdit(path, error);
+    DeleteFileW(path);
+    return ok;
+}
+
 int main() {
+    {
+        CReadOnlyMmtsFile reader;
+        assert(LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy.mmts",
+            "metadata":{"sourceStartMs":999,"sourceEndMs":1000},
+            "timeline":[{"sourceEndMs":1000,"sourceStartMs":0},
+                        {"sourceStartMs":2000,"sourceEndMs":3000}]})"));
+        assert(reader.m_editSegments.size() == 2);
+        assert(reader.m_editSegments[0].startMsec == 0 && reader.m_editSegments[0].endMsec == 1000);
+        assert(reader.m_editSegments[1].startMsec == 2000 && reader.m_editSegments[1].programStartMsec == 1000);
+        assert(!LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy.mmts",
+            "timeline":[{"sourceStartMs":0},{"sourceEndMs":1000}]})"));
+    }
     BYTE buf[188];
     {
         CReadOnlyMmtsFile file;
