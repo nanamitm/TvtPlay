@@ -140,11 +140,32 @@ void AppendUtf8CodePoint(std::string &value, unsigned codePoint)
         value.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
         value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
     }
-    else {
+    else if (codePoint <= 0xFFFF) {
         value.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
         value.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
         value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
     }
+    else {
+        value.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+        value.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+        value.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    }
+}
+
+bool ReadHexEscape(const std::string &text, size_t pos, unsigned &codePoint)
+{
+    if (pos + 4 >= text.size()) return false;
+    codePoint = 0;
+    for (int i = 1; i <= 4; ++i) {
+        const char hex = text[pos + i];
+        codePoint <<= 4;
+        if ('0' <= hex && hex <= '9') codePoint |= hex - '0';
+        else if ('a' <= hex && hex <= 'f') codePoint |= hex - 'a' + 10;
+        else if ('A' <= hex && hex <= 'F') codePoint |= hex - 'A' + 10;
+        else return false;
+    }
+    return true;
 }
 
 bool ReadJsonString(const std::string &text, size_t valueBegin, std::string &value)
@@ -170,18 +191,19 @@ bool ReadJsonString(const std::string &text, size_t valueBegin, std::string &val
         case 'r': value.push_back('\r'); break;
         case 't': value.push_back('\t'); break;
         case 'u': {
-            if (pos + 4 >= text.size()) return false;
             unsigned codePoint = 0;
-            for (int i = 1; i <= 4; ++i) {
-                const char hex = text[pos + i];
-                codePoint <<= 4;
-                if ('0' <= hex && hex <= '9') codePoint |= hex - '0';
-                else if ('a' <= hex && hex <= 'f') codePoint |= hex - 'a' + 10;
-                else if ('A' <= hex && hex <= 'F') codePoint |= hex - 'A' + 10;
-                else return false;
+            if (!ReadHexEscape(text, pos, codePoint)) return false;
+            pos += 4;
+            if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
+                unsigned low = 0;
+                if (pos + 6 >= text.size() || text[pos + 1] != '\\' || text[pos + 2] != 'u' ||
+                    !ReadHexEscape(text, pos + 2, low) || low < 0xDC00 || low > 0xDFFF) return false;
+                codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (low - 0xDC00);
+                pos += 6;
+            } else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
+                return false;
             }
             AppendUtf8CodePoint(value, codePoint);
-            pos += 4;
             break;
         }
         default: return false;

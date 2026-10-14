@@ -84,6 +84,18 @@ int main() {
         assert(!LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy.mmts",
             "timeline":[{"sourceStartMs":0},{"sourceEndMs":1000}]})"));
     }
+    {
+        CReadOnlyMmtsFile reader;
+        assert(LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy\uD83D\uDE00.mmts",
+            "map":"index\uD83D\uDE00.mmtsmap","timeline":[{"sourceEndMs":1000,"sourceStartMs":0}]})"));
+        assert(std::filesystem::path(reader.m_mediaPath).filename().wstring() == L"dummy\xD83D\xDE00.mmts");
+        assert(std::filesystem::path(reader.m_mapPath).filename().wstring() == L"index\xD83D\xDE00.mmtsmap");
+        for (const char *escape : {"\\uD83D", "\\uDE00", "\\uD83D\\u0041", "\\uD83D\\uD83D"}) {
+            const std::string json = std::string(R"({"version":1,"sourceSize":2,"source":"dummy)") + escape +
+                R"(.mmts","timeline":[{"sourceStartMs":0,"sourceEndMs":1000}]})";
+            assert(!LoadJson(reader, json));
+        }
+    }
     BYTE buf[188];
     {
         CReadOnlyMmtsFile file;
