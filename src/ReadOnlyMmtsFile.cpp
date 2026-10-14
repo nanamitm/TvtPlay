@@ -558,28 +558,40 @@ bool CReadOnlyMmtsFile::StartEditSegment(int segmentIndex, int sourceTargetMsec)
     return true;
 }
 
+bool CReadOnlyMmtsFile::AdvanceEditSegment()
+{
+    const int next = m_editCurrentSegment + 1;
+    if (next >= static_cast<int>(m_editSegments.size())) {
+        m_eof = true;
+        return true;
+    }
+    // Retain consumed TS bytes so the consumer can rewind across the join.
+    auto history = std::move(m_output);
+    const bool started = StartEditSegment(next, m_editSegments[next].startMsec);
+    m_output = std::move(history);
+    m_outputOffset = m_output.size();
+    return started;
+}
+
 bool CReadOnlyMmtsFile::FillOutput()
 {
     std::vector<BYTE> input(INPUT_CHUNK_SIZE);
     while (!m_eof && m_outputOffset == m_output.size()) {
         // Switch only after the previous segment's output has been consumed.
         if (m_editCurrentSegment >= 0 && m_converter->IsEditSegmentComplete()) {
-            const int nextSegment = m_editCurrentSegment + 1;
-            if (nextSegment >= static_cast<int>(m_editSegments.size())) {
-                m_eof = true;
-                break;
-            } else {
-                // Preserve history needed by the consumer's read-ahead rewind.
-                auto history = std::move(m_output);
-                const bool started = StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec);
-                m_output = std::move(history);
-                m_outputOffset = m_output.size();
-                if (!started) return false;
-            }
+            if (!AdvanceEditSegment()) return false;
+            if (m_eof) break;
         }
         const int read = m_input.Read(input.data(), static_cast<int>(input.size()));
         if (read < 0) return false;
-        if (read == 0) { m_eof = true; break; }
+        if (read == 0) {
+            if (m_editCurrentSegment >= 0) {
+                if (!AdvanceEditSegment()) return false;
+                continue;
+            }
+            m_eof = true;
+            break;
+        }
         m_converter->Push(input.data(), static_cast<size_t>(read));
         auto output = m_converter->TakeOutput();
         if (!output.empty()) {

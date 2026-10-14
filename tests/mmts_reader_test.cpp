@@ -15,6 +15,7 @@ HINSTANCE g_hinstDLL = nullptr;
 namespace {
 int chunksRead, resets;
 bool emptyFirst;
+bool completeOnPush = true, rewindInput;
 __int64 lastInputSeek;
 int64_t lastSourceStart, lastProgramStart;
 }
@@ -25,7 +26,7 @@ int CReadOnlyLocalFile::Read(BYTE *p, int) {
     *p = static_cast<BYTE>(++chunksRead);
     return 1;
 }
-__int64 CReadOnlyLocalFile::SetPointer(__int64 p, MOVE_METHOD) { lastInputSeek = p; return p; }
+__int64 CReadOnlyLocalFile::SetPointer(__int64 p, MOVE_METHOD) { lastInputSeek = p; if (rewindInput) chunksRead = 0; return p; }
 __int64 CReadOnlyLocalFile::GetSize() const { return 2; }
 
 struct Mmt4kConverter::Impl { BYTE marker{}; bool complete{}; };
@@ -33,7 +34,7 @@ Mmt4kConverter::Mmt4kConverter() : m_impl(std::make_unique<Impl>()) {}
 Mmt4kConverter::~Mmt4kConverter() = default;
 bool Mmt4kConverter::Init(const std::string &, const std::string &, const std::string &, bool, bool) { return true; }
 void Mmt4kConverter::InitWithoutCas() {}
-void Mmt4kConverter::Push(const uint8_t *p, size_t) { m_impl->marker = *p; m_impl->complete = true; }
+void Mmt4kConverter::Push(const uint8_t *p, size_t) { m_impl->marker = *p; m_impl->complete = completeOnPush; }
 std::vector<uint8_t> Mmt4kConverter::TakeOutput() {
     return emptyFirst && m_impl->marker == 1 ? std::vector<uint8_t>() : std::vector<uint8_t>(188, m_impl->marker);
 }
@@ -47,6 +48,7 @@ bool Mmt4kConverter::IsEditSegmentComplete() const { return m_impl->complete; }
 void Initialize(CReadOnlyMmtsFile &file, bool edited = true) {
     chunksRead = resets = 0;
     emptyFirst = false;
+    completeOnPush = true; rewindInput = false;
     file.m_converter = std::make_unique<Mmt4kConverter>();
     file.m_virtualSize = 10000;
     file.m_durationMsec = 2000;
@@ -156,6 +158,23 @@ int main() {
         assert(file.SetPointer(94, IReadOnlyFile::MOVE_METHOD_BEGIN) == 94);
         assert(file.Read(buf, 94) == 94 && buf[0] == 1);
         assert(resets == 0);
+    }
+    {
+        CReadOnlyMmtsFile file;
+        Initialize(file);
+        completeOnPush = false; rewindInput = true;
+        file.m_editSegments = {{1000, 3000, 0}, {0, 1000, 2000}};
+        file.SetRewindSize(752);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 1);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 2);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 1);
+        assert(file.m_editCurrentSegment == 1 && resets == 1 && lastInputSeek == 0);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 2);
+        assert(file.Read(buf, 188) == 0);
+        assert(file.SetPointer(-752, IReadOnlyFile::MOVE_METHOD_CURRENT) == 0);
+        for (int i = 0; i < 4; ++i)
+            assert(file.Read(buf, 188) == 188 && buf[0] == (i % 2) + 1);
+        assert(file.Read(buf, 188) == 0 && resets == 1);
     }
     std::cout << "MMTS reader tests passed\n";
 }
