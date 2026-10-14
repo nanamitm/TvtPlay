@@ -1,6 +1,7 @@
 #ifdef ENABLE_MMT4K
 
 #include "Mmt4kConverter.h"
+#include "MmtsEditGate.h"
 
 #include <exception>
 #include <iostream>
@@ -8,6 +9,7 @@
 #include "casProxy.h"
 #include "config.h"
 #include "mmtTlvDemuxer.h"
+#include "mmtStream.h"
 #include "remuxerHandler.h"
 #include "smartCard.h"
 #include "stream.h"
@@ -25,6 +27,7 @@ public:
         m_segmentComplete = false;
         m_start90k = sourceStartMsec * 90;
         m_end90k = sourceEndMsec * 90;
+        m_gate.SetRange(m_start90k, m_end90k);
         // RemuxerHandler subtracts this from PTS/DTS/PCR.  Keeping the first
         // segment's original base while subtracting each cut gap gives the
         // virtual program one continuous TS clock.
@@ -32,6 +35,11 @@ public:
     }
 
     bool IsEditSegmentComplete() const { return m_segmentComplete; }
+    void ResetFragments() { m_gate.Clear(); }
+    void onPacketDrop(uint16_t packetId, const MmtTlv::MmtStream *stream) override {
+        if (stream) m_gate.Drop(stream->getStreamIndex());
+        RemuxerHandler::onPacketDrop(packetId, stream);
+    }
 
     void onVideoData(const MmtTlv::MmtStream &stream, const MmtTlv::MfuData &mfu) override
     {
@@ -64,14 +72,13 @@ private:
     {
         if (!m_editEnabled) return true;
         const int64_t pts90k = To90k(stream, mfu);
-        if (pts90k < 0) return false;
         if (pts90k >= m_end90k) {
             if (isVideo) m_segmentComplete = true;
-            return false;
         }
-        return pts90k >= m_start90k;
+        return m_gate.Accept(stream.getStreamIndex(), pts90k, mfu.isFirstFragment, mfu.isLastFragment);
     }
 
+    MmtsEditGate m_gate;
     bool m_editEnabled{};
     bool m_segmentComplete{};
     int64_t m_start90k{};
@@ -172,6 +179,7 @@ void Mmt4kConverter::Reset()
     m_impl->output.clear();
     m_impl->demuxer.resetStreams();
     m_impl->remuxer.clear();
+    m_impl->remuxer.ResetFragments();
 }
 
 void Mmt4kConverter::SetEditSegment(int64_t sourceStartMsec, int64_t sourceEndMsec,
