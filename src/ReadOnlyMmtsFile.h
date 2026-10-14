@@ -41,6 +41,7 @@ private:
     bool LoadEdit(LPCTSTR editPath, const char *&errorMessage);
     bool StartEditSegment(int segmentIndex, int sourceTargetMsec);
     bool FillOutput();
+    bool AdvanceEditSegment();
     __int64 FindSourceOffset(int msec) const;
 
     CReadOnlyLocalFile m_input;

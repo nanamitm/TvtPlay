@@ -5,16 +5,17 @@
 #include <vector>
 #include <cassert>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <tchar.h>
-#define private public
 #include "../src/ReadOnlyMmtsFile.h"
-#undef private
 #include "../src/Mmt4kConverter.h"
 
 HINSTANCE g_hinstDLL = nullptr;
 namespace {
 int chunksRead, resets;
 bool emptyFirst;
+bool completeOnPush = true, rewindInput;
 __int64 lastInputSeek;
 int64_t lastSourceStart, lastProgramStart;
 }
@@ -25,7 +26,7 @@ int CReadOnlyLocalFile::Read(BYTE *p, int) {
     *p = static_cast<BYTE>(++chunksRead);
     return 1;
 }
-__int64 CReadOnlyLocalFile::SetPointer(__int64 p, MOVE_METHOD) { lastInputSeek = p; return p; }
+__int64 CReadOnlyLocalFile::SetPointer(__int64 p, MOVE_METHOD) { lastInputSeek = p; if (rewindInput) chunksRead = 0; return p; }
 __int64 CReadOnlyLocalFile::GetSize() const { return 2; }
 
 struct Mmt4kConverter::Impl { BYTE marker{}; bool complete{}; };
@@ -33,7 +34,7 @@ Mmt4kConverter::Mmt4kConverter() : m_impl(std::make_unique<Impl>()) {}
 Mmt4kConverter::~Mmt4kConverter() = default;
 bool Mmt4kConverter::Init(const std::string &, const std::string &, const std::string &, bool, bool) { return true; }
 void Mmt4kConverter::InitWithoutCas() {}
-void Mmt4kConverter::Push(const uint8_t *p, size_t) { m_impl->marker = *p; m_impl->complete = true; }
+void Mmt4kConverter::Push(const uint8_t *p, size_t) { m_impl->marker = *p; m_impl->complete = completeOnPush; }
 std::vector<uint8_t> Mmt4kConverter::TakeOutput() {
     return emptyFirst && m_impl->marker == 1 ? std::vector<uint8_t>() : std::vector<uint8_t>(188, m_impl->marker);
 }
@@ -47,6 +48,7 @@ bool Mmt4kConverter::IsEditSegmentComplete() const { return m_impl->complete; }
 void Initialize(CReadOnlyMmtsFile &file, bool edited = true) {
     chunksRead = resets = 0;
     emptyFirst = false;
+    completeOnPush = true; rewindInput = false;
     file.m_converter = std::make_unique<Mmt4kConverter>();
     file.m_virtualSize = 10000;
     file.m_durationMsec = 2000;
@@ -59,7 +61,41 @@ void Initialize(CReadOnlyMmtsFile &file, bool edited = true) {
     }
 }
 
+bool LoadJson(CReadOnlyMmtsFile &reader, const std::string &json) {
+    WCHAR dir[MAX_PATH], path[MAX_PATH];
+    assert(GetTempPathW(MAX_PATH, dir) && GetTempFileNameW(dir, L"tvt", 0, path));
+    { std::ofstream file(std::filesystem::path(path), std::ios::binary); file << json; }
+    const char *error = nullptr;
+    bool ok = reader.LoadEdit(path, error);
+    DeleteFileW(path);
+    return ok;
+}
+
 int main() {
+    {
+        CReadOnlyMmtsFile reader;
+        assert(LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy.mmts",
+            "metadata":{"sourceStartMs":999,"sourceEndMs":1000},
+            "timeline":[{"sourceEndMs":1000,"sourceStartMs":0},
+                        {"sourceStartMs":2000,"sourceEndMs":3000}]})"));
+        assert(reader.m_editSegments.size() == 2);
+        assert(reader.m_editSegments[0].startMsec == 0 && reader.m_editSegments[0].endMsec == 1000);
+        assert(reader.m_editSegments[1].startMsec == 2000 && reader.m_editSegments[1].programStartMsec == 1000);
+        assert(!LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy.mmts",
+            "timeline":[{"sourceStartMs":0},{"sourceEndMs":1000}]})"));
+    }
+    {
+        CReadOnlyMmtsFile reader;
+        assert(LoadJson(reader, R"({"version":1,"sourceSize":2,"source":"dummy\uD83D\uDE00.mmts",
+            "map":"index\uD83D\uDE00.mmtsmap","timeline":[{"sourceEndMs":1000,"sourceStartMs":0}]})"));
+        assert(std::filesystem::path(reader.m_mediaPath).filename().wstring() == L"dummy\xD83D\xDE00.mmts");
+        assert(std::filesystem::path(reader.m_mapPath).filename().wstring() == L"index\xD83D\xDE00.mmtsmap");
+        for (const char *escape : {"\\uD83D", "\\uDE00", "\\uD83D\\u0041", "\\uD83D\\uD83D"}) {
+            const std::string json = std::string(R"({"version":1,"sourceSize":2,"source":"dummy)") + escape +
+                R"(.mmts","timeline":[{"sourceStartMs":0,"sourceEndMs":1000}]})";
+            assert(!LoadJson(reader, json));
+        }
+    }
     BYTE buf[188];
     {
         CReadOnlyMmtsFile file;
@@ -134,6 +170,23 @@ int main() {
         assert(file.SetPointer(94, IReadOnlyFile::MOVE_METHOD_BEGIN) == 94);
         assert(file.Read(buf, 94) == 94 && buf[0] == 1);
         assert(resets == 0);
+    }
+    {
+        CReadOnlyMmtsFile file;
+        Initialize(file);
+        completeOnPush = false; rewindInput = true;
+        file.m_editSegments = {{1000, 3000, 0}, {0, 1000, 2000}};
+        file.SetRewindSize(752);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 1);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 2);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 1);
+        assert(file.m_editCurrentSegment == 1 && resets == 1 && lastInputSeek == 0);
+        assert(file.Read(buf, 188) == 188 && buf[0] == 2);
+        assert(file.Read(buf, 188) == 0);
+        assert(file.SetPointer(-752, IReadOnlyFile::MOVE_METHOD_CURRENT) == 0);
+        for (int i = 0; i < 4; ++i)
+            assert(file.Read(buf, 188) == 188 && buf[0] == (i % 2) + 1);
+        assert(file.Read(buf, 188) == 0 && resets == 1);
     }
     std::cout << "MMTS reader tests passed\n";
 }

@@ -69,20 +69,59 @@ bool ExtractTextValue(const std::string &line, const char *key, __int64 &value)
     return ParseInteger(std::string_view(line).substr(valueBegin, end - valueBegin), value);
 }
 
+// Walk complete JSON values so keys in strings or nested objects are not members.
+bool JsonValueEnd(const std::string &text, size_t &pos, unsigned depth = 0)
+{
+    if (depth > 64) return false;
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+    if (pos == text.size()) return false;
+    const char first = text[pos++];
+    if (first == '"') {
+        while (pos < text.size()) {
+            char ch = text[pos++];
+            if (ch == '"') return true;
+            if (ch == '\\' && pos < text.size()) ++pos;
+            else if (static_cast<unsigned char>(ch) < 0x20) return false;
+        }
+        return false;
+    }
+    if (first == '{' || first == '[') {
+        const char close = first == '{' ? '}' : ']';
+        while (pos < text.size()) {
+            while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+            if (pos < text.size() && text[pos] == close) { ++pos; return true; }
+            if (!JsonValueEnd(text, pos, depth + 1)) return false;
+            while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+            if (pos == text.size()) return false;
+            if (text[pos] == close) { ++pos; return true; }
+            if (text[pos] != ',' && !(first == '{' && text[pos] == ':')) return false;
+            ++pos;
+        }
+        return false;
+    }
+    while (pos < text.size() && text[pos] != ',' && text[pos] != '}' && text[pos] != ']') ++pos;
+    return true;
+}
+
 bool FindJsonValue(const std::string &text, const char *key, size_t &valueBegin, size_t searchBegin = 0)
 {
-    const std::string needle = std::string("\"") + key + "\"";
     size_t pos = searchBegin;
-    while ((pos = text.find(needle, pos)) != std::string::npos) {
-        pos += needle.size();
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+    if (pos == text.size() || text[pos++] != '{') return false;
+    for (;;) {
         while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
-        if (pos >= text.size() || text[pos] != ':') continue;
-        ++pos;
+        if (pos == text.size() || text[pos] != '"') return false;
+        const size_t begin = pos;
+        if (!JsonValueEnd(text, pos)) return false;
+        const bool match = text.substr(begin, pos - begin) == std::string("\"") + key + "\"";
         while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
-        valueBegin = pos;
-        return true;
+        if (pos == text.size() || text[pos++] != ':') return false;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (match) { valueBegin = pos; return true; }
+        if (!JsonValueEnd(text, pos)) return false;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (pos == text.size() || text[pos++] != ',') return false;
     }
-    return false;
 }
 
 bool ReadJsonInteger(const std::string &text, size_t valueBegin, __int64 &value)
@@ -101,11 +140,32 @@ void AppendUtf8CodePoint(std::string &value, unsigned codePoint)
         value.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
         value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
     }
-    else {
+    else if (codePoint <= 0xFFFF) {
         value.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
         value.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
         value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
     }
+    else {
+        value.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+        value.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+        value.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+        value.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+    }
+}
+
+bool ReadHexEscape(const std::string &text, size_t pos, unsigned &codePoint)
+{
+    if (pos + 4 >= text.size()) return false;
+    codePoint = 0;
+    for (int i = 1; i <= 4; ++i) {
+        const char hex = text[pos + i];
+        codePoint <<= 4;
+        if ('0' <= hex && hex <= '9') codePoint |= hex - '0';
+        else if ('a' <= hex && hex <= 'f') codePoint |= hex - 'a' + 10;
+        else if ('A' <= hex && hex <= 'F') codePoint |= hex - 'A' + 10;
+        else return false;
+    }
+    return true;
 }
 
 bool ReadJsonString(const std::string &text, size_t valueBegin, std::string &value)
@@ -131,18 +191,19 @@ bool ReadJsonString(const std::string &text, size_t valueBegin, std::string &val
         case 'r': value.push_back('\r'); break;
         case 't': value.push_back('\t'); break;
         case 'u': {
-            if (pos + 4 >= text.size()) return false;
             unsigned codePoint = 0;
-            for (int i = 1; i <= 4; ++i) {
-                const char hex = text[pos + i];
-                codePoint <<= 4;
-                if ('0' <= hex && hex <= '9') codePoint |= hex - '0';
-                else if ('a' <= hex && hex <= 'f') codePoint |= hex - 'a' + 10;
-                else if ('A' <= hex && hex <= 'F') codePoint |= hex - 'A' + 10;
-                else return false;
+            if (!ReadHexEscape(text, pos, codePoint)) return false;
+            pos += 4;
+            if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
+                unsigned low = 0;
+                if (pos + 6 >= text.size() || text[pos + 1] != '\\' || text[pos + 2] != 'u' ||
+                    !ReadHexEscape(text, pos + 2, low) || low < 0xDC00 || low > 0xDFFF) return false;
+                codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (low - 0xDC00);
+                pos += 6;
+            } else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
+                return false;
             }
             AppendUtf8CodePoint(value, codePoint);
-            pos += 4;
             break;
         }
         default: return false;
@@ -320,16 +381,31 @@ bool CReadOnlyMmtsFile::LoadEdit(LPCTSTR editPath, const char *&errorMessage)
     std::vector<EditSegment> segments;
     size_t scan = 0;
     int totalDuration = 0;
+    if (!FindJsonValue(json, "timeline", scan) || scan >= json.size() || json[scan++] != '[') {
+        errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+        return false;
+    }
     for (;;) {
-        __int64 start = 0, end = 0;
-        if (!FindJsonValue(json, "sourceStartMs", valueBegin, scan)) break;
-        const size_t afterStart = valueBegin + 1;
-        if (!ReadJsonInteger(json, valueBegin, start) || !FindJsonValue(json, "sourceEndMs", valueBegin, afterStart) ||
-            !ReadJsonInteger(json, valueBegin, end)) {
+        while (scan < json.size() && std::isspace(static_cast<unsigned char>(json[scan]))) ++scan;
+        if (scan < json.size() && json[scan] == ']') break;
+        const size_t begin = scan;
+        if (scan == json.size() || json[scan] != '{' || !JsonValueEnd(json, scan)) {
             errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
             return false;
         }
-        scan = valueBegin + 1;
+        const std::string object = json.substr(begin, scan - begin);
+        __int64 start = 0, end = 0;
+        if (!FindJsonValue(object, "sourceStartMs", valueBegin) || !ReadJsonInteger(object, valueBegin, start) ||
+            !FindJsonValue(object, "sourceEndMs", valueBegin) || !ReadJsonInteger(object, valueBegin, end)) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+            return false;
+        }
+        while (scan < json.size() && std::isspace(static_cast<unsigned char>(json[scan]))) ++scan;
+        if (scan == json.size() || (json[scan] != ',' && json[scan] != ']')) {
+            errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit timeline";
+            return false;
+        }
+        if (json[scan] == ',') ++scan;
         if (start < 0 || end <= start || end > (std::numeric_limits<int>::max)() ||
             end - start > (std::numeric_limits<int>::max)() || totalDuration > (std::numeric_limits<int>::max)() - (end - start)) {
             errorMessage = "CReadOnlyMmtsFile: Invalid .mmtsedit segment";
@@ -504,28 +580,40 @@ bool CReadOnlyMmtsFile::StartEditSegment(int segmentIndex, int sourceTargetMsec)
     return true;
 }
 
+bool CReadOnlyMmtsFile::AdvanceEditSegment()
+{
+    const int next = m_editCurrentSegment + 1;
+    if (next >= static_cast<int>(m_editSegments.size())) {
+        m_eof = true;
+        return true;
+    }
+    // Retain consumed TS bytes so the consumer can rewind across the join.
+    auto history = std::move(m_output);
+    const bool started = StartEditSegment(next, m_editSegments[next].startMsec);
+    m_output = std::move(history);
+    m_outputOffset = m_output.size();
+    return started;
+}
+
 bool CReadOnlyMmtsFile::FillOutput()
 {
     std::vector<BYTE> input(INPUT_CHUNK_SIZE);
     while (!m_eof && m_outputOffset == m_output.size()) {
         // Switch only after the previous segment's output has been consumed.
         if (m_editCurrentSegment >= 0 && m_converter->IsEditSegmentComplete()) {
-            const int nextSegment = m_editCurrentSegment + 1;
-            if (nextSegment >= static_cast<int>(m_editSegments.size())) {
-                m_eof = true;
-                break;
-            } else {
-                // Preserve history needed by the consumer's read-ahead rewind.
-                auto history = std::move(m_output);
-                const bool started = StartEditSegment(nextSegment, m_editSegments[nextSegment].startMsec);
-                m_output = std::move(history);
-                m_outputOffset = m_output.size();
-                if (!started) return false;
-            }
+            if (!AdvanceEditSegment()) return false;
+            if (m_eof) break;
         }
         const int read = m_input.Read(input.data(), static_cast<int>(input.size()));
         if (read < 0) return false;
-        if (read == 0) { m_eof = true; break; }
+        if (read == 0) {
+            if (m_editCurrentSegment >= 0) {
+                if (!AdvanceEditSegment()) return false;
+                continue;
+            }
+            m_eof = true;
+            break;
+        }
         m_converter->Push(input.data(), static_cast<size_t>(read));
         auto output = m_converter->TakeOutput();
         if (!output.empty()) {
