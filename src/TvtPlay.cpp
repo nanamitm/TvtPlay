@@ -41,8 +41,17 @@
 
 #define INFO_DESCRIPTION_SUFFIX L"+)"
 
+// ビルドした版 (git describe)。ビルド前に tools/generate-version-header.ps1 が書き出す
+// (TVTest の TVTestVersionHashGen.bat と同じ仕組み)
+#if __has_include("TvtPlayVersion.h")
+#include "TvtPlayVersion.h"
+#endif
+#ifndef TVTPLAY_VERSION_STRING_W
+#define TVTPLAY_VERSION_STRING_W L"unknown"
+#endif
+
 static const WCHAR INFO_PLUGIN_NAME[] = L"TvtPlay";
-static const WCHAR INFO_DESCRIPTION[] = L"ファイル再生機能を追加 (ver.3.4" INFO_DESCRIPTION_SUFFIX;
+static const WCHAR INFO_DESCRIPTION[] = L"ファイル再生機能を追加 (ver.3.4" INFO_DESCRIPTION_SUFFIX L" " TVTPLAY_VERSION_STRING_W;
 static const int INFO_VERSION = 27;
 
 #define WM_UPDATE_STATUS    (WM_APP + 1)

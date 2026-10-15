@@ -41,3 +41,6 @@ dist/
 *.ipdb
 *.tlog
 *.log
+
+# Written before each build by tools/generate-version-header.ps1.
+src/TvtPlayVersion.h
