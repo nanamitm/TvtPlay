@@ -48,6 +48,12 @@ jobs:
           msbuild BonDriver_Pipe_src\BonDriver_Pipe.sln /m /nologo
           /p:Configuration=Release /p:Platform=x64
 
+      # The MMTS reader and the edit fragment gate, built standalone with
+      # clang++. The thumbnail test needs recordings, which CI does not have.
+      - name: Run reader tests
+        shell: pwsh
+        run: ./tests/run-mmts-reader.ps1
+
       - name: Upload plugin
         uses: actions/upload-artifact@v7
         with:
