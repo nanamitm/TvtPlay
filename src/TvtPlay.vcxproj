@@ -78,11 +78,14 @@
       <AdditionalDependencies>ws2_32.lib;Shlwapi.lib;Comctl32.lib;UxTheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
+      <Command>set "PSModulePath="
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\generate-version-header.ps1" -OutFile "$(ProjectDir)TvtPlayVersion.h" -Name TVTPLAY
+if errorlevel 1 exit /b 1
+msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
 msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m
 set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\build-ffmpeg.ps1"</Command>
-      <Message>Building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
+      <Message>Generating TvtPlayVersion.h, building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -105,11 +108,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\bu
       <AdditionalDependencies>ws2_32.lib;Shlwapi.lib;Comctl32.lib;UxTheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
+      <Command>set "PSModulePath="
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\generate-version-header.ps1" -OutFile "$(ProjectDir)TvtPlayVersion.h" -Name TVTPLAY
+if errorlevel 1 exit /b 1
+msbuild "$(SolutionDir)thirdparty\dantto4k\thirdparty\tsduck\scripts\msvc\config.vcxproj" /t:BuildAllConfig /p:Configuration=$(Configuration);Platform=x64;PlatformToolset=v143 /m
 msbuild "$(SolutionDir)thirdparty\dantto4k\msvc\dantto4k.sln" /t:tsducklib /p:Configuration=$(Configuration) /p:Platform=x64 /m
 set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)thirdparty\build-ffmpeg.ps1"</Command>
-      <Message>Building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
+      <Message>Generating TvtPlayVersion.h, building dantto4k TSDuck and FFmpeg static libraries if out of date</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
