@@ -1029,8 +1029,9 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
     }
     m_head = m_curr;
 
-    // パケットを処理するだけのデータがなければ読む
-    if (!m_curr || m_tail - m_curr <= m_unitSize) {
+    // 同期確認には次のパケットの先頭も必要。MMTS変換では1回のReadが
+    // 1パケット以下になることがあるため、繰り越しながら追加で読む。
+    while (!m_curr || m_tail - m_curr <= m_unitSize) {
         // この繰越し処理によりm_headとパケットヘッダは同期する
         BYTE carry[320];
         int carrySize = !m_curr ? 0 : static_cast<int>(m_tail - m_curr);
@@ -1038,8 +1039,9 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
 
         BYTE *pBuf;
         int readBytes = fSyncRead ? m_reader.SyncRead(&pBuf) : m_reader.Read(&pBuf);
-        if (readBytes < 0) {
+        if (readBytes <= 0) {
             m_curr = m_head = m_tail = nullptr;
+            break;
         }
         else {
             m_curr = m_head = pBuf - carrySize;
