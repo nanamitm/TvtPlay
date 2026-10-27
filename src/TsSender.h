@@ -72,6 +72,14 @@ public:
     DWORD GetBroadcastUnixTime() const;
     int GetRate() const;
 private:
+    enum class PcrReadError { None, EndOfFile, Read, Sync, Limit, Seek };
+    struct PcrReadResult {
+        PcrReadError error = PcrReadError::None;
+        int packets = 0;
+        int pcrs = 0;
+        int trailingBytes = 0;
+    };
+    const char *FormatOpenSeekError(const char *stage);
     DWORD GetAdjTickCount();
     bool ReadToPcr(bool fSend, bool fSyncRead);
     void RotateBuffer(bool fSend, bool fSyncRead);
@@ -93,6 +101,9 @@ private:
 
     std::unique_ptr<IReadOnlyFile> m_file;
     CBufferedFileReader m_reader;
+    PcrReadResult m_pcrReadResult;
+    // Kept alive across Close(), because Open() returns a pointer to this text.
+    char m_openErrorMessage[256] = {};
     BYTE *m_curr, *m_head, *m_tail;
     int m_unitSize;
     bool m_fTrimPacket, m_fUnderrunCtrl;

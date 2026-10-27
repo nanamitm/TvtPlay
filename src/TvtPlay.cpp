@@ -1628,8 +1628,8 @@ bool CTvtPlay::Open(LPCTSTR fileName, int offset, int stretchID)
                          m_pcrThresholdMsec, errorMessage))
     {
         if (errorMessage) {
-            TCHAR log[128];
-            _stprintf_s(log, TEXT("%.127hs"), errorMessage);
+            TCHAR log[256];
+            _stprintf_s(log, TEXT("%.255hs"), errorMessage);
             m_pApp->AddLog(log, TVTest::LOG_TYPE_ERROR);
         }
         return false;

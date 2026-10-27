@@ -2,6 +2,7 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include <Shlwapi.h>
+#include <cstdio>
 #include "ReadOnlyMpeg4File.h"
 #ifdef ENABLE_MMT4K
 #include "ReadOnlyMmtsFile.h"
@@ -255,7 +256,10 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
 
     BYTE buf[8192];
     int readBytes = m_file->Read(buf, sizeof(buf));
-    if (readBytes < 0) goto ERROR_EXIT;
+    if (readBytes < 0) {
+        errorMessage = "CTsSender::Open(): Initial stream read failed";
+        goto ERROR_EXIT;
+    }
 
     if (!fMpeg4 && !fMmts) {
         // TSパケットの単位を決定
@@ -306,7 +310,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
 
     // ファイル先頭のPCRを取得
     if (!SeekToBegin()) {
-        errorMessage = "CTsSender::Open(): SeekToBegin() Error";
+        errorMessage = FormatOpenSeekError("SeekToBegin()");
         goto ERROR_EXIT;
     }
     m_initPcr = m_pcr;
@@ -364,7 +368,7 @@ bool CTsSender::Open(LPCTSTR path, DWORD salt, int bufSize, bool fConvTo188, boo
     }
 
     if (!SeekToBegin()) {
-        errorMessage = "CTsSender::Open(): SeekToBegin()-2 Error";
+        errorMessage = FormatOpenSeekError("SeekToBegin()-2");
         goto ERROR_EXIT;
     }
 
@@ -890,11 +894,29 @@ DWORD CTsSender::GetAdjTickCount()
 }
 
 
-// PCRが現れるまでTSパケットを処理する
-// 戻り値: false:終端に達したかPCRが現れる前に処理パケット数が上限に達した, true:正常に処理した
+const char *CTsSender::FormatOpenSeekError(const char *stage)
+{
+    const char *reason;
+    switch (m_pcrReadResult.error) {
+    case PcrReadError::EndOfFile: reason = "EOF before reference PCR"; break;
+    case PcrReadError::Read: reason = "stream read failed"; break;
+    case PcrReadError::Sync: reason = "TS synchronization failed"; break;
+    case PcrReadError::Limit: reason = "reference PCR search limit reached"; break;
+    case PcrReadError::Seek: reason = "stream seek failed"; break;
+    default: reason = "reference PCR acquisition failed"; break;
+    }
+    _snprintf_s(m_openErrorMessage, _TRUNCATE,
+                "CTsSender::Open(): %s failed: %s [TS=%d, PCR=%d, tail=%d]",
+                stage, reason, m_pcrReadResult.packets, m_pcrReadResult.pcrs,
+                m_pcrReadResult.trailingBytes);
+    return m_openErrorMessage;
+}
+
+// PCRが現れるまでTSパケットを処理し、失敗理由と探索数を記録する。
 bool CTsSender::ReadToPcr(bool fSend, bool fSyncRead)
 {
     MAGIC_NUMBER(0x76389426);
+    m_pcrReadResult = {};
     bool fPcr = false;
     for (int limit = READ_TO_PCR_LIMIT_PACKETS; !fPcr && limit > 0; --limit) {
         // TSパケットを1つ処理する
@@ -915,12 +937,16 @@ bool CTsSender::ReadToPcr(bool fSend, bool fSyncRead)
                 RotateBuffer(fSend, fSyncRead);
                 if (!m_curr) return false;
             }
-            if (i == RESYNC_FAILURE_LIMIT) return false;
+            if (i == RESYNC_FAILURE_LIMIT) {
+                m_pcrReadResult.error = PcrReadError::Sync;
+                return false;
+            }
             ASSERT(m_tail - m_curr > m_unitSize);
         }
 
         TS_HEADER header;
         extract_ts_header(&header, m_curr);
+        ++m_pcrReadResult.packets;
         // [統計(地上波)]
         // adaptation_field_control == 0:0.00%, 1:99.03%, 2:0.21%, 3:0.76%
         // payload_unit_start_indicator:2.09%
@@ -933,6 +959,7 @@ bool CTsSender::ReadToPcr(bool fSend, bool fSyncRead)
             extract_adaptation_field(&adapt, m_curr + 4);
 
             if (adapt.pcr_flag) {
+                ++m_pcrReadResult.pcrs;
                 // 参照PIDが決まっていないとき、最初に3回PCRが出現したPIDを参照PIDとする
                 // 参照PIDのPCRが現れることなく5回別のPCRが出現すれば、参照PIDを変更する
                 if (header.pid != m_pcrPid) {
@@ -999,6 +1026,7 @@ bool CTsSender::ReadToPcr(bool fSend, bool fSyncRead)
             RotateBuffer(fSend, fSyncRead);
         }
     }
+    m_pcrReadResult.error = fPcr ? PcrReadError::None : PcrReadError::Limit;
     return fPcr;
 }
 
@@ -1029,8 +1057,9 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
     }
     m_head = m_curr;
 
-    // パケットを処理するだけのデータがなければ読む
-    if (!m_curr || m_tail - m_curr <= m_unitSize) {
+    // 同期確認には次のパケットの先頭も必要。MMTS変換では1回のReadが
+    // 1パケット以下になることがあるため、繰り越しながら追加で読む。
+    while (!m_curr || m_tail - m_curr <= m_unitSize) {
         // この繰越し処理によりm_headとパケットヘッダは同期する
         BYTE carry[320];
         int carrySize = !m_curr ? 0 : static_cast<int>(m_tail - m_curr);
@@ -1038,8 +1067,11 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
 
         BYTE *pBuf;
         int readBytes = fSyncRead ? m_reader.SyncRead(&pBuf) : m_reader.Read(&pBuf);
-        if (readBytes < 0) {
+        if (readBytes <= 0) {
+            m_pcrReadResult.error = readBytes == 0 ? PcrReadError::EndOfFile : PcrReadError::Read;
+            m_pcrReadResult.trailingBytes = carrySize;
             m_curr = m_head = m_tail = nullptr;
+            break;
         }
         else {
             m_curr = m_head = pBuf - carrySize;
@@ -1055,6 +1087,8 @@ void CTsSender::RotateBuffer(bool fSend, bool fSyncRead)
 #ifdef ENABLE_MMT4K
 bool CTsSender::SeekMmts(int msec)
 {
+    m_pcrReadResult = {};
+    m_pcrReadResult.error = PcrReadError::Seek;
     auto *file = dynamic_cast<CReadOnlyMmtsFile*>(m_file.get());
     if (!file) return false;
     m_reader.Flush();
@@ -1065,12 +1099,14 @@ bool CTsSender::SeekMmts(int msec)
     ResetEitFilter();
     m_fEnPcr = false;
     const bool success = ReadToPcr(false, true);
+    const PcrReadResult result = m_pcrReadResult;
     if (!success && hadPcr && file->SeekToMsec(previousMsec)) {
         m_curr = m_head = m_tail = nullptr;
         ResetEitFilter();
         m_fEnPcr = false;
         ReadToPcr(false, true);
     }
+    m_pcrReadResult = result;
     if (m_fEnPcr) {
         m_prevPcr = m_pcr;
         m_lastSentPcr = m_pcr;
@@ -1081,6 +1117,8 @@ bool CTsSender::SeekMmts(int msec)
 
 bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMethod)
 {
+    m_pcrReadResult = {};
+    m_pcrReadResult.error = PcrReadError::Seek;
     m_reader.Flush();
     __int64 lastPos = m_reader.GetFilePosition();
     if (lastPos < 0) return false;
@@ -1093,6 +1131,7 @@ bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMeth
     ResetEitFilter();
     m_fEnPcr = false;
     if (!ReadToPcr(false, true)) {
+        const PcrReadResult result = m_pcrReadResult;
         // なるべく呼び出し前の状態に回復させるが、完全とは限らない
         if (m_file->SetPointer(lastPos, IReadOnlyFile::MOVE_METHOD_BEGIN) >= 0) {
             m_curr = m_head = m_tail = nullptr;
@@ -1102,6 +1141,7 @@ bool CTsSender::Seek(__int64 distanceToMove, IReadOnlyFile::MOVE_METHOD moveMeth
                 m_lastSentPcr = m_pcr;
             }
         }
+        m_pcrReadResult = result;
         return false;
     }
     m_prevPcr = m_pcr;
