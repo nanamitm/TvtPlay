@@ -18,8 +18,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Version = '8.1.3'
-$Sha256 = '7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3'
+$Version = '9.1'
+$Sha256 = '1a4d394ae63d190a526cd052eb4415c156b5c5e2df37efab41a7de0b8fde2433'
 $ConfigureOptions = @(
     '--toolchain=msvc'
     '--arch=x86_64'
